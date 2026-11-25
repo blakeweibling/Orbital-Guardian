@@ -1,0 +1,1829 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ORBITAL GUARDIAN // DEBRIS TELEMETRY</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Three.js & OrbitControls (r128) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            space: {
+              950: '#030712',
+              900: '#0a0f1d',
+              850: '#111827',
+              800: '#1e293b',
+            }
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #02040a;
+      color: #e2e8f0;
+      font-family: 'Inter', sans-serif;
+    }
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 0;
+    }
+    /* Custom scrollbar for aerospace panels */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.4);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(71, 85, 105, 0.6);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(6, 182, 212, 0.7);
+    }
+
+    /* Subtle scanline & grid HUD texture */
+    .hud-panel {
+      background: rgba(6, 11, 25, 0.80);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(51, 65, 85, 0.65);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    .hud-glow-cyan {
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.25);
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.85); opacity: 0.9; }
+      70% { transform: scale(1.6); opacity: 0; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+    .pulse-dot::after {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 9999px;
+      border: 1px solid currentColor;
+      animation: pulse-ring 2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+    }
+
+    /* Custom range / toggle transitions */
+    .filter-chip {
+      transition: all 0.18s ease;
+    }
+    .filter-chip:active {
+      transform: scale(0.97);
+    }
+  </style>
+</head>
+<body class="antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
+
+  <!-- 3D WebGL Viewport -->
+  <div id="canvas-container"></div>
+
+  <!-- Hover Tooltip for 3D Objects -->
+  <div id="hover-tooltip" class="fixed pointer-events-none z-40 hidden px-3 py-2 rounded-lg bg-slate-950/90 border border-cyan-500/50 backdrop-blur-md shadow-xl text-xs font-mono transition-opacity duration-75">
+    <div class="flex items-center gap-2">
+      <span id="tt-dot" class="w-2 h-2 rounded-full bg-cyan-400"></span>
+      <span id="tt-name" class="font-bold text-slate-100">ISS (ZARYA)</span>
+    </div>
+    <div class="text-[11px] text-slate-400 mt-0.5 flex gap-3">
+      <span id="tt-norad">NORAD: 25544</span>
+      <span id="tt-alt" class="text-cyan-300">ALT: 418 km</span>
+    </div>
+  </div>
+
+  <!-- TOP HEADER BAR -->
+  <header class="fixed top-2 left-2 right-2 z-20 hud-panel rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+    <!-- Brand & System Status -->
+    <div class="flex items-center gap-3">
+      <div class="relative flex items-center justify-center w-9 h-9 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-400">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="12" r="3.5" />
+          <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-28 12 12)" />
+          <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(35 12 12)" stroke-dasharray="2 2" />
+        </svg>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-mono font-bold text-xs sm:text-sm tracking-wider text-slate-100">
+            ORBITAL GUARDIAN <span class="text-cyan-400 hidden sm:inline">// DEBRIS TELEMETRY</span>
+          </h1>
+          <span class="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+            <span class="relative w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot"></span>
+            SSN FEED ACTIVE
+          </span>
+        </div>
+        <p class="text-[10px] font-mono text-slate-400 hidden sm:block">
+          SGP4 KEPLERIAN PROPAGATOR • REAL-TIME LEO/MEO/GEO SURVEILLANCE
+        </p>
+      </div>
+    </div>
+
+    <!-- Center Telemetry Metrics & UTC Clock -->
+    <div class="hidden xl:flex items-center gap-5 px-4 py-1 rounded-lg bg-slate-900/70 border border-slate-800/80 font-mono text-xs">
+      <div>
+        <div class="text-[9px] text-slate-400 uppercase tracking-wider">UTC Mission Time</div>
+        <div id="utc-clock" class="text-cyan-300 font-semibold">2026-11-24 20:12:00 UTC</div>
+      </div>
+      <div class="h-6 w-px bg-slate-800"></div>
+      <div>
+        <div class="text-[9px] text-slate-400 uppercase tracking-wider">USSTRATCOM Catalog</div>
+        <div class="text-slate-100 font-semibold">34,812 <span class="text-[10px] text-slate-400 font-normal">tracked</span></div>
+      </div>
+      <div class="h-6 w-px bg-slate-800"></div>
+      <div>
+        <div class="text-[9px] text-slate-400 uppercase tracking-wider">Rendered Sim Nodes</div>
+        <div id="visible-count-badge" class="text-emerald-400 font-semibold">5,000 / 5,000</div>
+      </div>
+    </div>
+
+    <!-- Right Simulation Warp Controls & Info Modal Trigger -->
+    <div class="flex items-center gap-1.5 sm:gap-2">
+      <!-- Mobile Drawer Toggles -->
+      <button id="toggle-left-btn" class="lg:hidden p-2 rounded-lg bg-slate-900/90 border border-slate-700 text-slate-300 hover:text-cyan-400 text-xs font-mono" title="Toggle Filters">
+        FILTERS
+      </button>
+
+      <!-- Time Warp Controls -->
+      <div class="flex items-center bg-slate-900/90 border border-slate-800 rounded-lg p-0.5 font-mono text-[11px]" role="group" aria-label="Simulation Speed">
+        <button data-speed="0" class="speed-btn px-2 py-1 rounded-md text-slate-400 hover:text-white transition" title="Pause">II</button>
+        <button data-speed="1" class="speed-btn px-2 py-1 rounded-md text-slate-400 hover:text-white transition" title="Real-Time (1x)">1x</button>
+        <button data-speed="25" class="speed-btn px-2 py-1 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold transition" title="25x Speed">25x</button>
+        <button data-speed="150" class="speed-btn px-2 py-1 rounded-md text-slate-400 hover:text-white transition" title="150x Speed">150x</button>
+        <button data-speed="600" class="speed-btn px-2 py-1 rounded-md text-slate-400 hover:text-white transition" title="600x Speed">600x</button>
+      </div>
+
+      <!-- Camera Reset -->
+      <button id="reset-cam-btn" class="p-2 rounded-lg bg-slate-900/90 border border-slate-800 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 transition" title="Reset Camera View">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+      </button>
+
+      <!-- Orbital Mechanics / Architecture Info Modal Button -->
+      <button id="open-info-btn" class="px-2.5 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-mono text-xs font-medium flex items-center gap-1.5 transition">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span class="hidden sm:inline">SGP4 / DATA</span>
+      </button>
+
+      <button id="toggle-right-btn" class="lg:hidden p-2 rounded-lg bg-slate-900/90 border border-slate-700 text-slate-300 hover:text-cyan-400 text-xs font-mono" title="Toggle Telemetry">
+        TELEM
+      </button>
+    </div>
+  </header>
+
+  <!-- LEFT SIDEBAR: CATALOG FILTERS & SEARCH -->
+  <aside id="left-sidebar" class="fixed top-16 bottom-32 left-2 w-72 sm:w-80 z-20 hud-panel rounded-xl p-3 flex flex-col gap-3 overflow-y-auto transition-transform duration-300 -translate-x-[110%] lg:translate-x-0">
+    <!-- Search Input -->
+    <div>
+      <label for="search-input" class="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">
+        Catalog Query (NORAD ID / Name / Intl Des)
+      </label>
+      <div class="relative">
+        <input
+          id="search-input"
+          type="text"
+          placeholder="e.g. 25544, ISS, FENGYUN, STARLINK..."
+          class="w-full bg-slate-900/90 border border-slate-700/80 focus:border-cyan-500 rounded-lg pl-8 pr-7 py-1.5 text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none"
+        />
+        <svg class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <button id="clear-search-btn" class="hidden absolute right-2 top-2 text-slate-400 hover:text-white text-xs font-mono">✕</button>
+      </div>
+      <!-- Instant Search Dropdown Results -->
+      <div id="search-results" class="hidden mt-1.5 max-h-40 overflow-y-auto rounded-lg bg-slate-900/95 border border-slate-700/80 divide-y divide-slate-800/80"></div>
+    </div>
+
+    <!-- Object Classification Filters -->
+    <div>
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="text-[10px] font-mono uppercase tracking-wider text-slate-400">Object Classification</span>
+        <button id="reset-types-btn" class="text-[10px] font-mono text-cyan-400 hover:underline">All</button>
+      </div>
+      <div class="grid grid-cols-1 gap-1.5 font-mono text-xs">
+        <button data-type="PAYLOAD" class="type-filter-btn filter-chip flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/50 text-slate-100">
+          <span class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-[#06b6d4] shadow-[0_0_8px_#06b6d4]"></span>
+            <span>Active Payloads</span>
+          </span>
+          <span id="count-PAYLOAD" class="text-[11px] text-cyan-300 font-semibold">1,450</span>
+        </button>
+
+        <button data-type="ROCKET_BODY" class="type-filter-btn filter-chip flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/50 text-slate-100">
+          <span class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-[#f59e0b] shadow-[0_0_8px_#f59e0b]"></span>
+            <span>Rocket Bodies (R/B)</span>
+          </span>
+          <span id="count-ROCKET_BODY" class="text-[11px] text-amber-300 font-semibold">650</span>
+        </button>
+
+        <button data-type="DEBRIS" class="type-filter-btn filter-chip flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-red-500/15 border border-red-500/50 text-slate-100">
+          <span class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-[#ef4444] shadow-[0_0_8px_#ef4444]"></span>
+            <span>Fragmentation Debris</span>
+          </span>
+          <span id="count-DEBRIS" class="text-[11px] text-red-300 font-semibold">2,720</span>
+        </button>
+
+        <button data-type="HIGH_RISK" class="type-filter-btn filter-chip flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-fuchsia-500/15 border border-fuchsia-500/50 text-slate-100">
+          <span class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-[#d946ef] shadow-[0_0_8px_#d946ef]"></span>
+            <span>High-Risk / Watchlist</span>
+          </span>
+          <span id="count-HIGH_RISK" class="text-[11px] text-fuchsia-300 font-semibold">180</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Orbital Regime Filters -->
+    <div>
+      <span class="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Orbital Altitude Regime</span>
+      <div class="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
+        <button data-regime="ALL" class="regime-btn px-2 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-500/50 text-cyan-200 font-semibold text-center">
+          ALL REGIMES
+        </button>
+        <button data-regime="LEO" class="regime-btn px-2 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-slate-200 text-center">
+          LEO (&lt;2,000km)
+        </button>
+        <button data-regime="MEO" class="regime-btn px-2 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-slate-200 text-center">
+          MEO (2k-35k)
+        </button>
+        <button data-regime="GEO" class="regime-btn px-2 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-slate-200 text-center">
+          GEO (~35,786)
+        </button>
+        <button data-regime="HEO" class="regime-btn col-span-2 px-2 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-slate-200 text-center">
+          HEO / MOLNIYA / GTO
+        </button>
+      </div>
+    </div>
+
+    <!-- Major Debris Events / Constellation Presets -->
+    <div>
+      <span class="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Historic Events & Shells</span>
+      <div class="flex flex-col gap-1 font-mono text-[11px]">
+        <button data-event="ALL" class="event-btn text-left px-2.5 py-1.5 rounded-lg bg-slate-800/90 border border-cyan-500/40 text-cyan-300 flex items-center justify-between">
+          <span>Full Orbital Catalog</span>
+          <span class="text-[10px] text-slate-400">100%</span>
+        </button>
+        <button data-event="FENGYUN" class="event-btn text-left px-2.5 py-1.5 rounded-lg bg-slate-900/70 border border-slate-800 hover:border-red-500/40 text-slate-300 flex items-center justify-between">
+          <span>Fengyun-1C ASAT (2007)</span>
+          <span class="text-[10px] text-red-400">850km SSO</span>
+        </button>
+        <button data-event="IRIDIUM_COSMOS" class="event-btn text-left px-2.5 py-1.5 rounded-lg bg-slate-900/70 border border-slate-800 hover:border-red-500/40 text-slate-300 flex items-center justify-between">
+          <span>Iridium 33 / Cosmos 2251</span>
+          <span class="text-[10px] text-red-400">780km</span>
+        </button>
+        <button data-event="COSMOS_1408" class="event-btn text-left px-2.5 py-1.5 rounded-lg bg-slate-900/70 border border-slate-800 hover:border-red-500/40 text-slate-300 flex items-center justify-between">
+          <span>Cosmos 1408 ASAT (2021)</span>
+          <span class="text-[10px] text-red-400">480km</span>
+        </button>
+        <button data-event="STARLINK_LEO" class="event-btn text-left px-2.5 py-1.5 rounded-lg bg-slate-900/70 border border-slate-800 hover:border-cyan-500/40 text-slate-300 flex items-center justify-between">
+          <span>LEO Mega-Constellations</span>
+          <span class="text-[10px] text-cyan-400">550km</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Visual Overlay Toggles -->
+    <div class="mt-auto pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] font-mono">
+      <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+        <input id="toggle-grid-cb" type="checkbox" checked class="accent-cyan-500 rounded" />
+        <span>Lat/Lon Grid</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+        <input id="toggle-orbits-cb" type="checkbox" checked class="accent-cyan-500 rounded" />
+        <span>Key Orbits</span>
+      </label>
+    </div>
+  </aside>
+
+  <!-- RIGHT SIDEBAR: SELECTED OBJECT TELEMETRY & CONJUNCTION MONITOR -->
+  <aside id="right-sidebar" class="fixed top-16 bottom-32 right-2 w-80 sm:w-88 z-20 hud-panel rounded-xl p-3 flex flex-col gap-3 overflow-y-auto transition-transform duration-300 translate-x-[110%] lg:translate-x-0">
+    <!-- Selected Object Telemetry Card -->
+    <div class="rounded-lg bg-slate-900/85 border border-slate-800 p-3">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-2 mb-2.5">
+        <div class="flex items-center gap-2">
+          <span id="sel-badge-dot" class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+          <span class="text-[10px] font-mono uppercase tracking-wider text-slate-400">Target Telemetry</span>
+        </div>
+        <button id="track-camera-btn" class="px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-[10px] font-mono text-cyan-300 transition">
+          LOCK CAM
+        </button>
+      </div>
+
+      <div class="mb-2.5">
+        <div class="flex items-baseline justify-between gap-2">
+          <h2 id="sel-name" class="font-mono font-bold text-sm text-white truncate">ISS (ZARYA)</h2>
+          <span id="sel-norad" class="font-mono text-xs text-cyan-400 shrink-0">#25544</span>
+        </div>
+        <div class="flex items-center gap-2 mt-1 text-[11px] font-mono text-slate-400">
+          <span id="sel-intldes">1998-067A</span>
+          <span>•</span>
+          <span id="sel-type-label" class="text-cyan-300">ACTIVE PAYLOAD</span>
+        </div>
+      </div>
+
+      <!-- Telemetry Data Grid -->
+      <div class="grid grid-cols-2 gap-1.5 font-mono text-xs">
+        <div class="p-2 rounded bg-slate-950/70 border border-slate-800/80">
+          <div class="text-[9px] text-slate-500 uppercase">Altitude</div>
+          <div id="sel-alt" class="text-cyan-300 font-semibold">418.4 km</div>
+        </div>
+        <div class="p-2 rounded bg-slate-950/70 border border-slate-800/80">
+          <div class="text-[9px] text-slate-500 uppercase">Orbital Velocity</div>
+          <div id="sel-vel" class="text-emerald-400 font-semibold">7.66 km/s</div>
+        </div>
+        <div class="p-2 rounded bg-slate-950/70 border border-slate-800/80">
+          <div class="text-[9px] text-slate-500 uppercase">Inclination</div>
+          <div id="sel-inc" class="text-slate-200">51.64°</div>
+        </div>
+        <div class="p-2 rounded bg-slate-950/70 border border-slate-800/80">
+          <div class="text-[9px] text-slate-500 uppercase">Period</div>
+          <div id="sel-period" class="text-slate-200">92.9 min</div>
+        </div>
+        <div class="p-2 rounded bg-slate-950/70 border border-slate-800/80">
+          <div class="text-[9px] text-slate-500 uppercase">Apogee × Perigee</div>
+          <div id="sel-ap-pe" class="text-slate-200 text-[11px]">421 × 415 km</div>
+        </div>
+        <div class="p-2 rounded bg-slate-950/70 border border-slate-800/80">
+          <div class="text-[9px] text-slate-500 uppercase">Source / RCS</div>
+          <div id="sel-source-rcs" class="text-slate-200 text-[11px]">ISS • LARGE</div>
+        </div>
+      </div>
+
+      <!-- Collision Risk Bar -->
+      <div class="mt-2.5 pt-2 border-t border-slate-800/80">
+        <div class="flex justify-between text-[10px] font-mono mb-1">
+          <span class="text-slate-400">COLLISION FLUX INDEX</span>
+          <span id="sel-risk-text" class="text-amber-400 font-semibold">MODERATE (0.42)</span>
+        </div>
+        <div class="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+          <div id="sel-risk-bar" class="h-full bg-gradient-to-r from-emerald-400 via-amber-400 to-red-500 transition-all duration-300" style="width: 42%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Conjunction & Close Approach Monitor -->
+    <div class="flex-1 flex flex-col min-h-[170px] rounded-lg bg-slate-900/85 border border-slate-800 p-3">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+          <h3 class="text-[10px] font-mono uppercase tracking-wider text-red-300 font-semibold">
+            SOCRATES Conjunction Alerts
+          </h3>
+        </div>
+        <span class="text-[10px] font-mono text-slate-500">CLICK TO FLY</span>
+      </div>
+
+      <div id="conjunction-list" class="flex-1 overflow-y-auto flex flex-col gap-1.5 pr-0.5 font-mono text-[11px]">
+        <!-- Populated dynamically via JS -->
+      </div>
+    </div>
+  </aside>
+
+  <!-- BOTTOM TELEMETRY STRIP: ALTITUDE DENSITY HISTOGRAM & QUICK PRESETS -->
+  <footer class="fixed bottom-2 left-2 right-2 h-28 z-20 hud-panel rounded-xl px-3 py-2 flex items-center gap-4">
+    <!-- Left Summary Stats -->
+    <div class="hidden md:flex flex-col justify-between h-full w-56 shrink-0 border-r border-slate-800 pr-3 font-mono">
+      <div>
+        <div class="text-[10px] text-slate-400 uppercase tracking-wider">Spatial Density Profile</div>
+        <div class="text-xs text-slate-200 font-semibold mt-0.5">Altitude Shell Distribution</div>
+      </div>
+      <div class="grid grid-cols-2 gap-1 text-[10px]">
+        <div class="bg-slate-900/80 px-2 py-1 rounded border border-slate-800">
+          <span class="text-slate-400 block">PEAK LEO</span>
+          <span class="text-red-400 font-bold">780-860 km</span>
+        </div>
+        <div class="bg-slate-900/80 px-2 py-1 rounded border border-slate-800">
+          <span class="text-slate-400 block">GEO BELT</span>
+          <span class="text-cyan-400 font-bold">35,786 km</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Altitude Histogram Canvas -->
+    <div class="flex-1 h-full flex flex-col min-w-0">
+      <div class="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
+        <span>ORBITAL ALTITUDE DISTRIBUTION (200 KM → 40,000 KM LOG-SCALE BINS)</span>
+        <span class="hidden sm:inline text-cyan-400">HOVER BARS FOR SHELL TELEMETRY</span>
+      </div>
+      <div class="relative flex-1 w-full min-h-0">
+        <canvas id="histogram-canvas" class="w-full h-full block rounded"></canvas>
+        <div id="hist-tooltip" class="hidden absolute top-0 px-2 py-0.5 rounded bg-slate-950/95 border border-cyan-500/40 text-[10px] font-mono text-cyan-200 pointer-events-none"></div>
+      </div>
+    </div>
+
+    <!-- Quick Focus Targets -->
+    <div class="hidden xl:flex flex-col justify-between h-full w-52 shrink-0 border-l border-slate-800 pl-3 font-mono text-[11px]">
+      <span class="text-[10px] text-slate-400 uppercase tracking-wider">Priority Tracking</span>
+      <div class="flex flex-col gap-1">
+        <button data-quick-norad="25544" class="quick-target-btn text-left px-2 py-1 rounded bg-slate-900/90 hover:bg-cyan-500/20 border border-slate-800 hover:border-cyan-500/40 text-cyan-300 truncate transition">
+          ► ISS (ZARYA) [418 km]
+        </button>
+        <button data-quick-norad="20580" class="quick-target-btn text-left px-2 py-1 rounded bg-slate-900/90 hover:bg-cyan-500/20 border border-slate-800 hover:border-cyan-500/40 text-slate-300 truncate transition">
+          ► HUBBLE HST [538 km]
+        </button>
+        <button data-quick-norad="29751" class="quick-target-btn text-left px-2 py-1 rounded bg-slate-900/90 hover:bg-red-500/20 border border-slate-800 hover:border-red-500/40 text-red-300 truncate transition">
+          ► FENGYUN-1C DEB [852 km]
+        </button>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ORBITAL MECHANICS & ARCHITECTURE MODAL -->
+  <div id="info-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+    <div class="hud-panel border-cyan-500/40 rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5 sm:p-6 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+        <div class="flex items-center gap-2.5">
+          <div class="w-2.5 h-2.5 rounded-full bg-cyan-400"></div>
+          <h2 class="font-mono font-bold text-sm sm:text-base text-white tracking-wide">
+            ORBITAL MECHANICS & SGP4 TELEMETRY ARCHITECTURE
+          </h2>
+        </div>
+        <button id="close-info-btn" class="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white font-mono text-xs">
+          ESC / ✕
+        </button>
+      </div>
+
+      <div class="space-y-4 text-xs sm:text-sm text-slate-300 leading-relaxed">
+        <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+          <h3 class="font-mono font-semibold text-cyan-400 text-xs uppercase mb-1.5">1. Keplerian & SGP4 Orbital Propagation</h3>
+          <p class="text-xs text-slate-300">
+            Each tracked resident space object (RSO) is propagated in real time using six classical Keplerian orbital elements derived from Two-Line Element (TLE) sets: Semi-major axis (<code class="text-cyan-300">a</code>), Eccentricity (<code class="text-cyan-300">e</code>), Inclination (<code class="text-cyan-300">i</code>), Right Ascension of the Ascending Node (<code class="text-cyan-300">Ω</code>), Argument of Perigee (<code class="text-cyan-300">ω</code>), and Mean Anomaly (<code class="text-cyan-300">M₀</code>). Kepler's equation <code class="text-amber-300">M = E - e·sin(E)</code> is solved iteratively via Newton-Raphson at every frame, incorporating secular J2 nodal precession (<code class="text-cyan-300">dΩ/dt</code>) and apsidal rotation (<code class="text-cyan-300">dω/dt</code>) caused by Earth's oblateness.
+          </p>
+        </div>
+
+        <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+          <h3 class="font-mono font-semibold text-amber-400 text-xs uppercase mb-1.5">2. High-Density Space Debris Shells</h3>
+          <ul class="text-xs text-slate-300 space-y-1.5 list-disc pl-4">
+            <li><strong class="text-red-400">780–860 km Sun-Synchronous LEO:</strong> Highest debris concentration in Earth orbit, dominated by the 2007 Fengyun-1C ASAT test (&gt;3,500 fragments) and the 2009 Iridium 33 / Cosmos 2251 hypervelocity collision (&gt;2,300 fragments).</li>
+            <li><strong class="text-cyan-400">480–560 km Commercial LEO:</strong> Occupied by the ISS (~418 km), Cosmos 1408 ASAT fragments (~480 km), and dense commercial broadband constellations (~550 km).</li>
+            <li><strong class="text-emerald-400">20,200 km Semi-Synchronous MEO:</strong> Global Navigation Satellite Systems (GPS, Galileo, GLONASS, BeiDou) with 12-hour orbital periods.</li>
+            <li><strong class="text-fuchsia-400">35,786 km Geostationary & Graveyard Belt:</strong> Communications satellites matching Earth's sidereal rotation period (23h 56m 4s), flanked by +300 km super-synchronous disposal orbits.</li>
+          </ul>
+        </div>
+
+        <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+          <h3 class="font-mono font-semibold text-emerald-400 text-xs uppercase mb-1.5">3. Live CelesTrak / Space-Track GP JSON Integration</h3>
+          <p class="text-xs text-slate-300 mb-2">
+            The propagation engine consumes standard CCSDS Orbit Mean-Elements Message (OMM) JSON objects from CelesTrak's public GP API:
+          </p>
+          <pre class="p-2.5 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] text-cyan-300 overflow-x-auto">GET https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json
+// Fields mapped directly to propagator:
+// NORAD_CAT_ID, OBJECT_NAME, INCLINATION, RA_OF_ASC_NODE,
+// ECCENTRICITY, ARG_OF_PERICENTER, MEAN_ANOMALY, MEAN_MOTION</pre>
+        </div>
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-slate-800 flex justify-end">
+        <button id="modal-ack-btn" class="px-4 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-mono font-bold text-xs transition">
+          RESUME SURVEILLANCE
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APPLICATION LOGIC & 3D ORBITAL ENGINE -->
+  <script>
+    (function () {
+      'use strict';
+
+      // =========================================================================
+      // 1. CONSTANTS & ASTRODYNAMICS PARAMETERS
+      // =========================================================================
+      const EARTH_RADIUS_KM = 6371.0;
+      const MU_EARTH = 398600.4418; // km^3 / s^2
+      const J2_EARTH = 1.08262668e-3;
+      const DEG2RAD = Math.PI / 180;
+      const RAD2DEG = 180 / Math.PI;
+      const TWO_PI = Math.PI * 2;
+      const SCENE_EARTH_RADIUS = 10.0; // 1 scene unit = 637.1 km
+      const KM_TO_SCENE = SCENE_EARTH_RADIUS / EARTH_RADIUS_KM;
+
+      const OBJECT_TYPES = {
+        PAYLOAD: { label: 'ACTIVE PAYLOAD', color: '#06b6d4', hex: 0x06b6d4 },
+        ROCKET_BODY: { label: 'ROCKET BODY', color: '#f59e0b', hex: 0xf59e0b },
+        DEBRIS: { label: 'DEBRIS FRAGMENT', color: '#ef4444', hex: 0xef4444 },
+        HIGH_RISK: { label: 'HIGH-RISK / WATCH', color: '#d946ef', hex: 0xd946ef }
+      };
+
+      const TOTAL_OBJECTS = 5000;
+
+      // Simulation state
+      const state = {
+        simTimeSec: 0,
+        epochStartMs: Date.now(),
+        speedMultiplier: 25,
+        selectedId: 0,
+        hoveredId: -1,
+        lockCamera: false,
+        activeTypes: new Set(['PAYLOAD', 'ROCKET_BODY', 'DEBRIS', 'HIGH_RISK']),
+        activeRegime: 'ALL',
+        activeEvent: 'ALL',
+        searchQuery: '',
+        showGrid: true,
+        showKeyOrbits: true
+      };
+
+      // =========================================================================
+      // 2. DETERMINISTIC PRNG & REALISTIC ORBITAL CATALOG GENERATOR
+      // =========================================================================
+      let seed = 421984;
+      function rand() {
+        seed = (seed * 1664525 + 1013904223) % 4294967296;
+        return seed / 4294967296;
+      }
+      function randRange(min, max) {
+        return min + rand() * (max - min);
+      }
+      function randGaussian(mean, std) {
+        let u = 0, v = 0;
+        while (u === 0) u = rand();
+        while (v === 0) v = rand();
+        const num = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+        return mean + num * std;
+      }
+
+      const catalog = [];
+
+      // Notable real-world orbital objects pinned at start of catalog
+      const NOTABLE_OBJECTS = [
+        { norad: 25544, name: 'ISS (ZARYA)', intl: '1998-067A', type: 'PAYLOAD', source: 'ISS', rcs: 'LARGE', altPe: 415, altAp: 421, inc: 51.64, raan: 45.2, argp: 112.0, m0: 20.0, event: 'STARLINK_LEO', risk: 0.42 },
+        { norad: 20580, name: 'HST (HUBBLE)', intl: '1990-037B', type: 'PAYLOAD', source: 'US', rcs: 'LARGE', altPe: 535, altAp: 540, inc: 28.47, raan: 132.5, argp: 78.4, m0: 140.0, event: 'ALL', risk: 0.28 },
+        { norad: 48274, name: 'CSS (TIANHE)', intl: '2021-035A', type: 'PAYLOAD', source: 'PRC', rcs: 'LARGE', altPe: 382, altAp: 391, inc: 41.47, raan: 210.0, argp: 44.1, m0: 290.0, event: 'ALL', risk: 0.36 },
+        { norad: 29751, name: 'FENGYUN 1C DEB', intl: '1999-025DQ', type: 'DEBRIS', source: 'PRC', rcs: 'SMALL', altPe: 842, altAp: 865, inc: 98.8, raan: 14.2, argp: 201.3, m0: 65.0, event: 'FENGYUN', risk: 0.89 },
+        { norad: 33773, name: 'IRIDIUM 33 DEB', intl: '1997-051C', type: 'DEBRIS', source: 'US', rcs: 'SMALL', altPe: 774, altAp: 792, inc: 86.4, raan: 285.1, argp: 15.8, m0: 185.0, event: 'IRIDIUM_COSMOS', risk: 0.84 },
+        { norad: 34454, name: 'COSMOS 2251 DEB', intl: '1993-036SX', type: 'DEBRIS', source: 'CIS', rcs: 'MEDIUM', altPe: 781, altAp: 805, inc: 74.0, raan: 102.7, argp: 310.2, m0: 12.0, event: 'IRIDIUM_COSMOS', risk: 0.86 },
+        { norad: 49505, name: 'COSMOS 1408 DEB', intl: '1982-092AK', type: 'DEBRIS', source: 'CIS', rcs: 'SMALL', altPe: 472, altAp: 495, inc: 82.6, raan: 168.4, argp: 94.0, m0: 215.0, event: 'COSMOS_1408', risk: 0.78 },
+        { norad: 27386, name: 'ENVISAT (DERELICT)', intl: '2002-009A', type: 'HIGH_RISK', source: 'ESA', rcs: 'LARGE', altPe: 764, altAp: 766, inc: 98.5, raan: 64.0, argp: 180.0, m0: 310.0, event: 'FENGYUN', risk: 0.94 },
+        { norad: 22285, name: 'SL-16 R/B (ZENIT-2)', intl: '1992-093B', type: 'ROCKET_BODY', source: 'CIS', rcs: 'LARGE', altPe: 844, altAp: 856, inc: 71.0, raan: 312.0, argp: 52.0, m0: 99.0, event: 'FENGYUN', risk: 0.91 },
+        { norad: 44713, name: 'STARLINK-1007', intl: '2019-074A', type: 'PAYLOAD', source: 'US', rcs: 'MEDIUM', altPe: 547, altAp: 550, inc: 53.05, raan: 88.2, argp: 12.0, m0: 44.0, event: 'STARLINK_LEO', risk: 0.21 },
+        { norad: 43226, name: 'GOES-17 (WEATHER)', intl: '2018-022A', type: 'PAYLOAD', source: 'US', rcs: 'LARGE', altPe: 35784, altAp: 35788, inc: 0.04, raan: 225.0, argp: 10.0, m0: 115.0, event: 'ALL', risk: 0.08 },
+        { norad: 41019, name: 'GPS BIIR-11 (PRN 19)', intl: '2004-009A', type: 'PAYLOAD', source: 'US', rcs: 'LARGE', altPe: 20175, altAp: 20190, inc: 55.2, raan: 150.4, argp: 45.0, m0: 270.0, event: 'ALL', risk: 0.06 }
+      ];
+
+      function buildOrbitalElement(id, spec) {
+        const rp = EARTH_RADIUS_KM + spec.altPe;
+        const ra = EARTH_RADIUS_KM + spec.altAp;
+        const a = (rp + ra) * 0.5;
+        const e = Math.max(0.0001, (ra - rp) / (ra + rp));
+        const incRad = spec.inc * DEG2RAD;
+        const raanRad = spec.raan * DEG2RAD;
+        const argpRad = spec.argp * DEG2RAD;
+        const m0Rad = spec.m0 * DEG2RAD;
+
+        // Mean motion n (rad/s)
+        const n = Math.sqrt(MU_EARTH / (a * a * a));
+        const periodMin = (TWO_PI / n) / 60.0;
+
+        // Secular J2 perturbations (rad/s)
+        const p = a * (1 - e * e);
+        const j2Factor = -1.5 * n * J2_EARTH * Math.pow(EARTH_RADIUS_KM / p, 2);
+        const raanDot = j2Factor * Math.cos(incRad);
+        const argpDot = -0.5 * j2Factor * (5 * Math.pow(Math.cos(incRad), 2) - 1);
+
+        let regime = 'LEO';
+        if (spec.altPe > 34000 && e < 0.05) regime = 'GEO';
+        else if (e >= 0.25) regime = 'HEO';
+        else if (spec.altPe >= 2000) regime = 'MEO';
+
+        return {
+          id,
+          norad: spec.norad,
+          name: spec.name,
+          intl: spec.intl,
+          type: spec.type,
+          source: spec.source,
+          rcs: spec.rcs,
+          altPe: spec.altPe,
+          altAp: spec.altAp,
+          a,
+          e,
+          inc: spec.inc,
+          incRad,
+          raan0: raanRad,
+          argp0: argpRad,
+          m0: m0Rad,
+          n,
+          periodMin,
+          raanDot,
+          argpDot,
+          regime,
+          event: spec.event || 'ALL',
+          risk: spec.risk,
+          // Live propagated state
+          x: 0, y: 0, z: 0,
+          currentAlt: (spec.altPe + spec.altAp) * 0.5,
+          currentVel: Math.sqrt(MU_EARTH / a),
+          visible: true
+        };
+      }
+
+      function generateCatalog() {
+        const sources = ['US', 'CIS', 'PRC', 'ESA', 'JPN', 'IND', 'FR', 'UK'];
+        const rcsSizes = ['SMALL', 'SMALL', 'MEDIUM', 'LARGE'];
+
+        // 1. Add notable pinned objects
+        NOTABLE_OBJECTS.forEach((obj, idx) => {
+          catalog.push(buildOrbitalElement(idx, obj));
+        });
+
+        // 2. Populate remaining objects with authentic orbital shells
+        for (let i = catalog.length; i < TOTAL_OBJECTS; i++) {
+          const r = rand();
+          const norad = 10000 + Math.floor(rand() * 52000);
+          const launchYr = 1968 + Math.floor(rand() * 58);
+          const intl = `${launchYr}-${String(1 + Math.floor(rand() * 140)).padStart(3, '0')}${String.fromCharCode(65 + Math.floor(rand() * 26))}`;
+          const source = sources[Math.floor(rand() * sources.length)];
+          const rcs = rcsSizes[Math.floor(rand() * rcsSizes.length)];
+
+          let spec;
+
+          if (r < 0.22) {
+            // Fengyun-1C ASAT Debris Cloud (2007) ~ 850 km Sun-Synchronous
+            const alt = Math.max(520, Math.min(1350, randGaussian(855, 85)));
+            spec = {
+              norad,
+              name: `FENGYUN 1C DEB`,
+              intl,
+              type: rand() < 0.05 ? 'HIGH_RISK' : 'DEBRIS',
+              source: 'PRC',
+              rcs: 'SMALL',
+              altPe: alt - randRange(2, 45),
+              altAp: alt + randRange(5, 110),
+              inc: randGaussian(98.8, 1.4),
+              raan: randRange(0, 360),
+              argp: randRange(0, 360),
+              m0: randRange(0, 360),
+              event: 'FENGYUN',
+              risk: randRange(0.55, 0.92)
+            };
+          } else if (r < 0.38) {
+            // Iridium 33 / Cosmos 2251 Collision Cloud (2009) ~ 785 km
+            const isIridium = rand() < 0.42;
+            const alt = Math.max(490, Math.min(1250, randGaussian(785, 75)));
+            spec = {
+              norad,
+              name: isIridium ? 'IRIDIUM 33 DEB' : 'COSMOS 2251 DEB',
+              intl,
+              type: rand() < 0.05 ? 'HIGH_RISK' : 'DEBRIS',
+              source: isIridium ? 'US' : 'CIS',
+              rcs: 'SMALL',
+              altPe: alt - randRange(2, 40),
+              altAp: alt + randRange(5, 95),
+              inc: isIridium ? randGaussian(86.4, 0.9) : randGaussian(74.0, 1.1),
+              raan: randRange(0, 360),
+              argp: randRange(0, 360),
+              m0: randRange(0, 360),
+              event: 'IRIDIUM_COSMOS',
+              risk: randRange(0.52, 0.89)
+            };
+          } else if (r < 0.48) {
+            // Cosmos 1408 ASAT Debris Cloud (2021) ~ 480 km
+            const alt = Math.max(340, Math.min(720, randGaussian(485, 55)));
+            spec = {
+              norad,
+              name: 'COSMOS 1408 DEB',
+              intl,
+              type: 'DEBRIS',
+              source: 'CIS',
+              rcs: 'SMALL',
+              altPe: alt - randRange(3, 35),
+              altAp: alt + randRange(4, 70),
+              inc: randGaussian(82.6, 0.8),
+              raan: randRange(0, 360),
+              argp: randRange(0, 360),
+              m0: randRange(0, 360),
+              event: 'COSMOS_1408',
+              risk: randRange(0.45, 0.82)
+            };
+          } else if (r < 0.68) {
+            // Commercial LEO Mega-Constellations (Starlink / OneWeb / Kuiper)
+            const isOneWeb = rand() < 0.2;
+            const alt = isOneWeb ? randGaussian(1200, 10) : randGaussian(548, 14);
+            const shellInc = isOneWeb ? 87.9 : (rand() < 0.7 ? 53.05 : 70.0);
+            spec = {
+              norad,
+              name: isOneWeb ? `ONEWEB-${100 + Math.floor(rand() * 600)}` : `STARLINK-${1000 + Math.floor(rand() * 5800)}`,
+              intl,
+              type: 'PAYLOAD',
+              source: isOneWeb ? 'UK' : 'US',
+              rcs: 'MEDIUM',
+              altPe: alt - 2,
+              altAp: alt + 2,
+              inc: randGaussian(shellInc, 0.15),
+              raan: randRange(0, 360),
+              argp: randRange(0, 360),
+              m0: randRange(0, 360),
+              event: 'STARLINK_LEO',
+              risk: randRange(0.12, 0.35)
+            };
+          } else if (r < 0.81) {
+            // Spent Rocket Bodies & General LEO Debris
+            const isRB = rand() < 0.45;
+            const alt = randRange(420, 1450);
+            const rbNames = ['SL-16 R/B', 'CZ-2D R/B', 'FALCON 9 R/B', 'ARIANE 5 R/B', 'DELTA 2 R/B', 'H-2A R/B'];
+            spec = {
+              norad,
+              name: isRB ? rbNames[Math.floor(rand() * rbNames.length)] : `OBJECT ${String.fromCharCode(65 + Math.floor(rand() * 26))}${Math.floor(rand() * 99)} DEB`,
+              intl,
+              type: isRB ? (rand() < 0.12 ? 'HIGH_RISK' : 'ROCKET_BODY') : 'DEBRIS',
+              source,
+              rcs: isRB ? 'LARGE' : 'SMALL',
+              altPe: alt - randRange(5, 45),
+              altAp: alt + randRange(5, 90),
+              inc: rand() < 0.5 ? randGaussian(98.2, 2.5) : randRange(28, 83),
+              raan: randRange(0, 360),
+              argp: randRange(0, 360),
+              m0: randRange(0, 360),
+              event: 'ALL',
+              risk: isRB ? randRange(0.45, 0.90) : randRange(0.25, 0.68)
+            };
+          } else if (r < 0.87) {
+            // MEO Navigation Constellations (GPS / Galileo / GLONASS / BeiDou)
+            const alt = randGaussian(20200, 650);
+            const gnssNames = ['GPS BIII', 'GALILEO-FOC', 'COSMOS (GLONASS)', 'BEIDOU-3 M'];
+            spec = {
+              norad,
+              name: `${gnssNames[Math.floor(rand() * gnssNames.length)]}-${1 + Math.floor(rand() * 32)}`,
+              intl,
+              type: rand() < 0.82 ? 'PAYLOAD' : 'ROCKET_BODY',
+              source,
+              rcs: 'LARGE',
+              altPe: alt - 15,
+              altAp: alt + 15,
+              inc: randGaussian(55.5, 2.5),
+              raan: randRange(0, 360),
+              argp: randRange(0, 360),
+              m0: randRange(0, 360),
+              event: 'ALL',
+              risk: randRange(0.03, 0.14)
+            };
+          } else if (r < 0.96) {
+            // GEO Belt & Super-Synchronous Graveyard Orbit (~35,786 km)
+            const isGraveyard = rand() < 0.28;
+            const alt = isGraveyard ? randRange(36050, 36450) : randGaussian(35786, 18);
+            const geoNames = ['INTELSAT', 'SES', 'ASTRA', 'EUTELSAT', 'GALAXY', 'ECHOSTAR', 'INMARSAT', 'TDRS'];
+            spec = {
+              norad,
+              name: isGraveyard ? `${geoNames[Math.floor(rand() * geoNames.length)]} (GRAVEYARD)` : `${geoNames[Math.floor(rand() * geoNames.length)]}-${1 + Math.floor(rand() * 25)}`,
+              intl,
+              type: isGraveyard ? (rand() < 0.35 ? 'ROCKET_BODY' : 'HIGH_RISK') : 'PAYLOAD',
+              source,
+              rcs: 'LARGE',
+              altPe: alt - 5,
+              altAp: alt + 5,
+              inc: isGraveyard ? randRange(1.5, 14.0) : randRange(0.01, 1.2),
+              raan: randRange(0, 360),
+              argp: randRange(0, 360),
+              m0: randRange(0, 360),
+              event: 'ALL',
+              risk: isGraveyard ? randRange(0.30, 0.62) : randRange(0.05, 0.19)
+            };
+          } else {
+            // HEO / GTO / Molniya Transfer Orbits
+            const altPe = randRange(240, 650);
+            const altAp = randRange(22000, 39500);
+            spec = {
+              norad,
+              name: rand() < 0.55 ? 'ARIANE 5 GTO R/B' : 'MOLNIYA 1-S DEB',
+              intl,
+              type: rand() < 0.6 ? 'ROCKET_BODY' : 'DEBRIS',
+              source,
+              rcs: 'LARGE',
+              altPe,
+              altAp,
+              inc: rand() < 0.5 ? 63.4 : randRange(6.0, 28.5),
+              raan: randRange(0, 360),
+              argp: rand() < 0.5 ? 270.0 : randRange(0, 360),
+              m0: randRange(0, 360),
+              event: 'ALL',
+              risk: randRange(0.18, 0.48)
+            };
+          }
+
+          catalog.push(buildOrbitalElement(i, spec));
+        }
+      }
+
+      generateCatalog();
+
+      // =========================================================================
+      // 3. KEPLERIAN ORBITAL PROPAGATOR
+      // =========================================================================
+      function solveKepler(M, e) {
+        let E = M;
+        for (let iter = 0; iter < 5; iter++) {
+          const dE = (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+          E -= dE;
+          if (Math.abs(dE) < 1e-6) break;
+        }
+        return E;
+      }
+
+      function computePositionAtTime(obj, tSec, outVec) {
+        const M = (obj.m0 + obj.n * tSec) % TWO_PI;
+        const E = solveKepler(M < 0 ? M + TWO_PI : M, obj.e);
+
+        const sinE = Math.sin(E);
+        const cosE = Math.cos(E);
+        const sqrtOneMinusE2 = Math.sqrt(1 - obj.e * obj.e);
+
+        // Perifocal coordinates (km)
+        const xOrb = obj.a * (cosE - obj.e);
+        const yOrb = obj.a * sqrtOneMinusE2 * sinE;
+        const rKm = Math.sqrt(xOrb * xOrb + yOrb * yOrb);
+
+        const raan = obj.raan0 + obj.raanDot * tSec;
+        const argp = obj.argp0 + obj.argpDot * tSec;
+        const inc = obj.incRad;
+
+        const cosO = Math.cos(raan);
+        const sinO = Math.sin(raan);
+        const cosW = Math.cos(argp);
+        const sinW = Math.sin(argp);
+        const cosI = Math.cos(inc);
+        const sinI = Math.sin(inc);
+
+        // Transform Perifocal -> ECI (Earth-Centered Inertial)
+        const xECI = (cosO * cosW - sinO * sinW * cosI) * xOrb + (-cosO * sinW - sinO * cosW * cosI) * yOrb;
+        const yECI = (sinO * cosW + cosO * sinW * cosI) * xOrb + (-sinO * sinW + cosO * cosW * cosI) * yOrb;
+        const zECI = (sinW * sinI) * xOrb + (cosW * sinI) * yOrb;
+
+        // Map ECI (Z-up) to Three.js scene coordinates (Y-up)
+        outVec.x = xECI * KM_TO_SCENE;
+        outVec.y = zECI * KM_TO_SCENE;
+        outVec.z = -yECI * KM_TO_SCENE;
+
+        return rKm;
+      }
+
+      // =========================================================================
+      // 4. THREE.JS SCENE, PROCEDURAL EARTH & ATMOSPHERE SHADER
+      // =========================================================================
+      const container = document.getElementById('canvas-container');
+      const scene = new THREE.Scene();
+
+      const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(22, 13, 24);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setClearColor(0x02040a, 1);
+      container.appendChild(renderer.domElement);
+
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.06;
+      controls.minDistance = 12.2;
+      controls.maxDistance = 160;
+      controls.rotateSpeed = 0.65;
+      controls.zoomSpeed = 0.9;
+
+      // Cancel camera lock if user manually drags orbit controls
+      controls.addEventListener('start', () => {
+        if (state.lockCamera) {
+          state.lockCamera = false;
+          updateTrackButtonUI();
+        }
+      });
+
+      // Starfield background
+      function createStarfield() {
+        const starCount = 3200;
+        const positions = new Float32Array(starCount * 3);
+        const colors = new Float32Array(starCount * 3);
+        for (let i = 0; i < starCount; i++) {
+          const theta = rand() * TWO_PI;
+          const phi = Math.acos(2 * rand() - 1);
+          const r = 240 + rand() * 140;
+          positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+          positions[i * 3 + 1] = r * Math.cos(phi);
+          positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+
+          const brightness = 0.45 + rand() * 0.55;
+          const tint = rand();
+          colors[i * 3] = brightness * (tint > 0.8 ? 0.8 : 1.0);
+          colors[i * 3 + 1] = brightness * (tint < 0.2 ? 0.9 : 1.0);
+          colors[i * 3 + 2] = brightness;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const mat = new THREE.PointsMaterial({ size: 0.75, vertexColors: true, transparent: true, opacity: 0.85 });
+        scene.add(new THREE.Points(geo, mat));
+      }
+      createStarfield();
+
+      // Procedural High-Tech Dark-Mode Earth Canvas Texture (Continents + City Lights + Grid)
+      function createProceduralEarthTexture() {
+        const w = 2048;
+        const h = 1024;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+
+        // Deep ocean base
+        const oceanGrad = ctx.createLinearGradient(0, 0, 0, h);
+        oceanGrad.addColorStop(0, '#040b18');
+        oceanGrad.addColorStop(0.5, '#071326');
+        oceanGrad.addColorStop(1, '#040b18');
+        ctx.fillStyle = oceanGrad;
+        ctx.fillRect(0, 0, w, h);
+
+        // Simplified continental polygons (lon, lat) for crisp dark-mode cartography
+        const continents = [
+          // North America
+          [[-168,65],[-140,70],[-110,73],[-82,70],[-65,60],[-55,48],[-70,41],[-81,25],[-90,21],[-97,26],[-105,20],[-118,33],[-124,48],[-138,59]],
+          // Greenland
+          [[-52,60],[-42,60],[-20,70],[-18,81],[-45,83],[-60,76]],
+          // South America
+          [[-78,9],[-62,10],[-50,1],[-35,-6],[-38,-15],[-48,-28],[-58,-38],[-68,-54],[-74,-52],[-72,-35],[-70,-18],[-81,-5]],
+          // Europe
+          [[-9,36],[-9,43],[-4,48],[2,51],[8,54],[10,58],[5,61],[18,69],[30,70],[42,67],[55,65],[58,52],[40,45],[28,41],[23,37],[15,38],[12,44],[3,43]],
+          // Africa
+          [[-17,15],[-12,28],[-5,35],[10,37],[25,31],[33,30],[43,12],[51,11],[41,-2],[35,-20],[28,-33],[18,-34],[14,-22],[12,-6],[8,4],[-4,5],[-14,10]],
+          // Asia
+          [[28,41],[42,42],[55,52],[60,68],[85,73],[115,73],[145,70],[175,66],[162,55],[142,53],[135,36],[122,39],[121,25],[109,20],[103,2],[98,16],[88,22],[80,8],[72,21],[62,25],[48,30],[36,35]],
+          // Japan / Maritime SE Asia
+          [[130,32],[136,34],[141,41],[145,44],[139,36]],
+          [[96,4],[104,-5],[116,-8],[125,-8],[120,1],[112,3],[102,1]],
+          // Australia
+          [[114,-22],[122,-14],[136,-12],[142,-11],[150,-23],[153,-28],[147,-38],[137,-35],[129,-32],[115,-34]],
+          // Antarctica
+          [[-180,-72],[-120,-74],[-60,-65],[0,-70],[60,-68],[120,-67],[180,-72],[180,-90],[-180,-90]]
+        ];
+
+        function lonLatToXY(lon, lat) {
+          const x = ((lon + 180) / 360) * w;
+          const y = ((90 - lat) / 180) * h;
+          return [x, y];
+        }
+
+        // Draw landmass fills & glowing coastal borders
+        ctx.save();
+        continents.forEach(poly => {
+          ctx.beginPath();
+          poly.forEach(([lon, lat], idx) => {
+            const [x, y] = lonLatToXY(lon, lat);
+            if (idx === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.closePath();
+          ctx.fillStyle = '#0f223d';
+          ctx.fill();
+          ctx.lineWidth = 2.0;
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.52)';
+          ctx.stroke();
+        });
+        ctx.restore();
+
+        // Add subtle illuminated urban clusters along populated latitudes
+        const cityClusters = [
+          [-74, 40.7], [-87.6, 41.8], [-118.2, 34.0], [-99.1, 19.4], [-46.6, -23.5],
+          [-0.1, 51.5], [2.3, 48.8], [13.4, 52.5], [37.6, 55.7], [31.2, 30.0],
+          [55.3, 25.2], [72.8, 19.0], [77.2, 28.6], [103.8, 1.3], [114.1, 22.3],
+          [121.4, 31.2], [116.4, 39.9], [126.9, 37.5], [139.7, 35.6], [151.2, -33.8]
+        ];
+        cityClusters.forEach(([lon, lat]) => {
+          const [cx, cy] = lonLatToXY(lon, lat);
+          const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 18);
+          grad.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
+          grad.addColorStop(0.4, 'rgba(245, 158, 11, 0.25)');
+          grad.addColorStop(1, 'rgba(6, 182, 212, 0)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 18, 0, TWO_PI);
+          ctx.fill();
+        });
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.anisotropy = 4;
+        return tex;
+      }
+
+      const earthGroup = new THREE.Group();
+      scene.add(earthGroup);
+
+      // Main Earth Sphere
+      const earthGeo = new THREE.SphereGeometry(SCENE_EARTH_RADIUS, 64, 64);
+      const earthMat = new THREE.MeshPhongMaterial({
+        map: createProceduralEarthTexture(),
+        emissive: new THREE.Color(0x041122),
+        emissiveIntensity: 0.6,
+        specular: new THREE.Color(0x164e63),
+        shininess: 18
+      });
+      const earthMesh = new THREE.Mesh(earthGeo, earthMat);
+      earthGroup.add(earthMesh);
+
+      // Lat/Lon Wireframe Graticule Sphere
+      const gridGeo = new THREE.SphereGeometry(SCENE_EARTH_RADIUS * 1.003, 36, 18);
+      const gridMat = new THREE.MeshBasicMaterial({
+        color: 0x06b6d4,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.08
+      });
+      const earthGridMesh = new THREE.Mesh(gridGeo, gridMat);
+      earthGroup.add(earthGridMesh);
+
+      // Atmospheric Fresnel Rim Glow Shader
+      const atmosphereGeo = new THREE.SphereGeometry(SCENE_EARTH_RADIUS * 1.08, 64, 64);
+      const atmosphereMat = new THREE.ShaderMaterial({
+        vertexShader: `
+          varying vec3 vNormal;
+          void main() {
+            vNormal = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vNormal;
+          void main() {
+            float intensity = pow(0.68 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.2);
+            gl_FragColor = vec4(0.05, 0.72, 0.92, 1.0) * intensity * 1.35;
+          }
+        `,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide,
+        transparent: true,
+        depthWrite: false
+      });
+      const atmosphereMesh = new THREE.Mesh(atmosphereGeo, atmosphereMat);
+      scene.add(atmosphereMesh);
+
+      // Lighting
+      const ambientLight = new THREE.AmbientLight(0x334155, 1.45);
+      scene.add(ambientLight);
+      const sunLight = new THREE.DirectionalLight(0xe0f2fe, 1.35);
+      sunLight.position.set(45, 22, 35);
+      scene.add(sunLight);
+
+      // Reference Equatorial GEO Ring (35,786 km)
+      const geoRingRadius = (EARTH_RADIUS_KM + 35786) * KM_TO_SCENE;
+      const geoRingPts = [];
+      for (let i = 0; i <= 180; i++) {
+        const a = (i / 180) * TWO_PI;
+        geoRingPts.push(new THREE.Vector3(Math.cos(a) * geoRingRadius, 0, Math.sin(a) * geoRingRadius));
+      }
+      const geoRingLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(geoRingPts),
+        new THREE.LineBasicMaterial({ color: 0x06b6d4, transparent: true, opacity: 0.16 })
+      );
+      scene.add(geoRingLine);
+
+      // =========================================================================
+      // 5. HIGH-PERFORMANCE THREE.POINTS DEBRIS CLOUD & SELECTED ORBIT VISUALS
+      // =========================================================================
+      function createGlowSpriteTexture() {
+        const c = document.createElement('canvas');
+        c.width = 64;
+        c.height = 64;
+        const ctx = c.getContext('2d');
+        const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        g.addColorStop(0, 'rgba(255,255,255,1)');
+        g.addColorStop(0.35, 'rgba(255,255,255,0.85)');
+        g.addColorStop(0.7, 'rgba(255,255,255,0.2)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 64, 64);
+        return new THREE.CanvasTexture(c);
+      }
+
+      const pointPositions = new Float32Array(TOTAL_OBJECTS * 3);
+      const pointColors = new Float32Array(TOTAL_OBJECTS * 3);
+      const pointsGeo = new THREE.BufferGeometry();
+      pointsGeo.setAttribute('position', new THREE.BufferAttribute(pointPositions, 3));
+      pointsGeo.setAttribute('color', new THREE.BufferAttribute(pointColors, 3));
+
+      const pointsMat = new THREE.PointsMaterial({
+        size: 0.34,
+        map: createGlowSpriteTexture(),
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.92,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true
+      });
+
+      const debrisPoints = new THREE.Points(pointsGeo, pointsMat);
+      scene.add(debrisPoints);
+
+      // Selected Object Full Elliptical Orbit Line, Marker, Velocity Vector, Apogee/Perigee
+      const selectedOrbitGeo = new THREE.BufferGeometry();
+      const selectedOrbitMat = new THREE.LineBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.95 });
+      const selectedOrbitLine = new THREE.Line(selectedOrbitGeo, selectedOrbitMat);
+      scene.add(selectedOrbitLine);
+
+      const selectedMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.24, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      const selectedHalo = new THREE.Mesh(
+        new THREE.RingGeometry(0.32, 0.48, 32),
+        new THREE.MeshBasicMaterial({ color: 0x22d3ee, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+      );
+      selectedMarker.add(selectedHalo);
+      scene.add(selectedMarker);
+
+      // Velocity Vector Arrow
+      const velocityArrow = new THREE.ArrowHelper(
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(0, 0, 0),
+        2.4,
+        0x34d399,
+        0.55,
+        0.32
+      );
+      scene.add(velocityArrow);
+
+      // Apogee & Perigee Markers
+      const apogeeMarker = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.18, 0),
+        new THREE.MeshBasicMaterial({ color: 0xf43f5e })
+      );
+      const perigeeMarker = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.18, 0),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+      );
+      scene.add(apogeeMarker);
+      scene.add(perigeeMarker);
+
+      function rebuildSelectedOrbitGeometry(obj) {
+        const segments = 240;
+        const pts = [];
+        const periodSec = obj.periodMin * 60;
+        const tmp = new THREE.Vector3();
+
+        let maxR = -Infinity;
+        let minR = Infinity;
+        const apVec = new THREE.Vector3();
+        const peVec = new THREE.Vector3();
+
+        for (let i = 0; i <= segments; i++) {
+          const tSample = state.simTimeSec + (i / segments) * periodSec;
+          const rKm = computePositionAtTime(obj, tSample, tmp);
+          pts.push(tmp.clone());
+          if (rKm > maxR) {
+            maxR = rKm;
+            apVec.copy(tmp);
+          }
+          if (rKm < minR) {
+            minR = rKm;
+            peVec.copy(tmp);
+          }
+        }
+
+        selectedOrbitGeo.setFromPoints(pts);
+        const typeHex = OBJECT_TYPES[obj.type].hex;
+        selectedOrbitMat.color.setHex(typeHex);
+        selectedHalo.material.color.setHex(typeHex);
+
+        apogeeMarker.position.copy(apVec);
+        perigeeMarker.position.copy(peVec);
+      }
+
+      // =========================================================================
+      // 6. FILTERING & COLOR SYNCHRONIZATION
+      // =========================================================================
+      function applyCatalogFilters() {
+        const q = state.searchQuery.trim().toUpperCase();
+        let visibleCounter = 0;
+
+        for (let i = 0; i < catalog.length; i++) {
+          const obj = catalog[i];
+          const typeMatch = state.activeTypes.has(obj.type);
+          const regimeMatch = state.activeRegime === 'ALL' || obj.regime === state.activeRegime;
+          const eventMatch = state.activeEvent === 'ALL' || obj.event === state.activeEvent;
+          const searchMatch =
+            q === '' ||
+            obj.name.includes(q) ||
+            String(obj.norad).includes(q) ||
+            obj.intl.includes(q);
+
+          obj.visible = typeMatch && regimeMatch && eventMatch && searchMatch;
+
+          const c = new THREE.Color(OBJECT_TYPES[obj.type].hex);
+          if (obj.visible) {
+            visibleCounter++;
+            pointColors[i * 3] = c.r;
+            pointColors[i * 3 + 1] = c.g;
+            pointColors[i * 3 + 2] = c.b;
+          } else {
+            // Hide filtered-out points cleanly
+            pointColors[i * 3] = 0;
+            pointColors[i * 3 + 1] = 0;
+            pointColors[i * 3 + 2] = 0;
+          }
+        }
+
+        pointsGeo.attributes.color.needsUpdate = true;
+        document.getElementById('visible-count-badge').textContent = `${visibleCounter.toLocaleString()} / ${TOTAL_OBJECTS.toLocaleString()}`;
+      }
+
+      // Update type filter button counts
+      function updateTypeCounts() {
+        const counts = { PAYLOAD: 0, ROCKET_BODY: 0, DEBRIS: 0, HIGH_RISK: 0 };
+        catalog.forEach(o => counts[o.type]++);
+        Object.keys(counts).forEach(k => {
+          const el = document.getElementById(`count-${k}`);
+          if (el) el.textContent = counts[k].toLocaleString();
+        });
+      }
+      updateTypeCounts();
+      applyCatalogFilters();
+
+      // =========================================================================
+      // 7. OBJECT SELECTION & LIVE TELEMETRY HUD UPDATES
+      // =========================================================================
+      function selectObjectByIndex(idx, flyCamera = false) {
+        if (idx < 0 || idx >= catalog.length) return;
+        state.selectedId = idx;
+        const obj = catalog[idx];
+
+        // Ensure object is visible even if filtered out
+        if (!obj.visible) {
+          state.activeTypes.add(obj.type);
+          state.activeRegime = 'ALL';
+          state.activeEvent = 'ALL';
+          syncFilterButtonsUI();
+          applyCatalogFilters();
+        }
+
+        rebuildSelectedOrbitGeometry(obj);
+        updateInspectorCard(obj);
+
+        if (flyCamera) {
+          const pos = new THREE.Vector3(obj.x, obj.y, obj.z);
+          const dir = pos.clone().normalize();
+          const dist = Math.max(4.5, pos.length() * 0.42);
+          camera.position.copy(pos).addScaledVector(dir, dist);
+          controls.target.copy(pos);
+          controls.update();
+        }
+      }
+
+      function updateInspectorCard(obj) {
+        const typeInfo = OBJECT_TYPES[obj.type];
+        document.getElementById('sel-badge-dot').style.backgroundColor = typeInfo.color;
+        document.getElementById('sel-name').textContent = obj.name;
+        document.getElementById('sel-norad').textContent = `#${obj.norad}`;
+        document.getElementById('sel-intldes').textContent = obj.intl;
+
+        const typeLabelEl = document.getElementById('sel-type-label');
+        typeLabelEl.textContent = typeInfo.label;
+        typeLabelEl.style.color = typeInfo.color;
+
+        document.getElementById('sel-inc').textContent = `${obj.inc.toFixed(2)}°`;
+        document.getElementById('sel-period').textContent = `${obj.periodMin.toFixed(1)} min`;
+        document.getElementById('sel-ap-pe').textContent = `${Math.round(obj.altAp)} × ${Math.round(obj.altPe)} km`;
+        document.getElementById('sel-source-rcs').textContent = `${obj.source} • ${obj.rcs}`;
+
+        const riskPct = Math.round(obj.risk * 100);
+        const riskLevel = riskPct >= 75 ? 'CRITICAL' : riskPct >= 40 ? 'MODERATE' : 'NOMINAL';
+        const riskColor = riskPct >= 75 ? 'text-red-400' : riskPct >= 40 ? 'text-amber-400' : 'text-emerald-400';
+        const riskTextEl = document.getElementById('sel-risk-text');
+        riskTextEl.className = `${riskColor} font-semibold`;
+        riskTextEl.textContent = `${riskLevel} (${obj.risk.toFixed(2)})`;
+        document.getElementById('sel-risk-bar').style.width = `${riskPct}%`;
+      }
+
+      function updateLiveTelemetryNumbers(obj) {
+        document.getElementById('sel-alt').textContent = `${obj.currentAlt.toFixed(1)} km`;
+        document.getElementById('sel-vel').textContent = `${obj.currentVel.toFixed(2)} km/s`;
+      }
+
+      // =========================================================================
+      // 8. CONJUNCTION & CLOSE APPROACH MONITOR (SOCRATES FEED)
+      // =========================================================================
+      const CONJUNCTION_ALERTS = [
+        { primaryIdx: 0, secondaryIdx: 6, missMeters: 142, pc: '1.84e-4', relVel: '14.6 km/s', tcaOffsetMin: 18 },
+        { primaryIdx: 7, secondaryIdx: 8, missMeters: 89, pc: '4.12e-4', relVel: '13.9 km/s', tcaOffsetMin: 41 },
+        { primaryIdx: 1, secondaryIdx: 4, missMeters: 310, pc: '6.20e-5', relVel: '14.2 km/s', tcaOffsetMin: 67 },
+        { primaryIdx: 9, secondaryIdx: 3, missMeters: 485, pc: '2.95e-5', relVel: '12.8 km/s', tcaOffsetMin: 94 },
+        { primaryIdx: 2, secondaryIdx: 5, missMeters: 620, pc: '1.40e-5', relVel: '13.4 km/s', tcaOffsetMin: 129 }
+      ];
+
+      function renderConjunctionFeed() {
+        const listEl = document.getElementById('conjunction-list');
+        listEl.innerHTML = '';
+
+        CONJUNCTION_ALERTS.forEach(alert => {
+          const pObj = catalog[alert.primaryIdx];
+          const sObj = catalog[alert.secondaryIdx];
+          const isCritical = alert.missMeters < 200;
+
+          const card = document.createElement('button');
+          card.className = `w-full text-left p-2 rounded-lg border transition ${
+            isCritical
+              ? 'bg-red-950/35 border-red-500/40 hover:border-red-400'
+              : 'bg-slate-950/70 border-slate-800 hover:border-cyan-500/50'
+          }`;
+
+          card.innerHTML = `
+            <div class="flex items-center justify-between">
+              <span class="font-semibold ${isCritical ? 'text-red-300' : 'text-amber-300'} truncate">
+                ${pObj.name}
+              </span>
+              <span class="px-1.5 py-0.2 rounded text-[10px] ${
+                isCritical ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/15 text-amber-300'
+              }">
+                ${alert.missMeters}m
+              </span>
+            </div>
+            <div class="text-[10px] text-slate-400 truncate mt-0.5">
+              vs ${sObj.name} (#${sObj.norad})
+            </div>
+            <div class="flex items-center justify-between text-[10px] text-slate-500 mt-1">
+              <span>Pc: <strong class="text-slate-300">${alert.pc}</strong></span>
+              <span>TCA: +${alert.tcaOffsetMin}m</span>
+            </div>
+          `;
+
+          card.addEventListener('click', () => {
+            selectObjectByIndex(alert.primaryIdx, true);
+          });
+
+          listEl.appendChild(card);
+        });
+      }
+      renderConjunctionFeed();
+
+      // =========================================================================
+      // 9. ALTITUDE DISTRIBUTION HISTOGRAM (HTML5 CANVAS)
+      // =========================================================================
+      const histCanvas = document.getElementById('histogram-canvas');
+      const histCtx = histCanvas.getContext('2d');
+      const HIST_BINS = [
+        { label: '300', min: 200, max: 450 },
+        { label: '500', min: 450, max: 600 },
+        { label: '700', min: 600, max: 750 },
+        { label: '800', min: 750, max: 900 },
+        { label: '1.1k', min: 900, max: 1400 },
+        { label: '2k', min: 1400, max: 5000 },
+        { label: '10k', min: 5000, max: 18000 },
+        { label: '20.2k', min: 18000, max: 24000 },
+        { label: '30k', min: 24000, max: 35000 },
+        { label: '35.8k', min: 35000, max: 42000 }
+      ];
+
+      // Pre-tally bin counts by type
+      HIST_BINS.forEach(bin => {
+        bin.PAYLOAD = 0;
+        bin.ROCKET_BODY = 0;
+        bin.DEBRIS = 0;
+        bin.HIGH_RISK = 0;
+        bin.total = 0;
+      });
+      catalog.forEach(obj => {
+        const avgAlt = (obj.altPe + obj.altAp) * 0.5;
+        const bin = HIST_BINS.find(b => avgAlt >= b.min && avgAlt < b.max) || HIST_BINS[HIST_BINS.length - 1];
+        bin[obj.type]++;
+        bin.total++;
+      });
+
+      function drawHistogram() {
+        const rect = histCanvas.parentElement.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        histCanvas.width = rect.width * dpr;
+        histCanvas.height = rect.height * dpr;
+        histCtx.scale(dpr, dpr);
+
+        const w = rect.width;
+        const h = rect.height;
+        histCtx.clearRect(0, 0, w, h);
+
+        const maxTotal = Math.max(...HIST_BINS.map(b => b.total), 1);
+        const padBottom = 14;
+        const chartH = h - padBottom - 4;
+        const barGap = 6;
+        const barW = Math.max(8, (w - barGap * (HIST_BINS.length + 1)) / HIST_BINS.length);
+
+        HIST_BINS.forEach((bin, i) => {
+          const x = barGap + i * (barW + barGap);
+          let yCursor = h - padBottom;
+
+          const segments = [
+            { key: 'DEBRIS', color: '#ef4444' },
+            { key: 'ROCKET_BODY', color: '#f59e0b' },
+            { key: 'PAYLOAD', color: '#06b6d4' },
+            { key: 'HIGH_RISK', color: '#d946ef' }
+          ];
+
+          segments.forEach(seg => {
+            const val = bin[seg.key];
+            if (val <= 0) return;
+            const segH = (val / maxTotal) * chartH;
+            histCtx.fillStyle = seg.color;
+            histCtx.fillRect(x, yCursor - segH, barW, segH);
+            yCursor -= segH;
+          });
+
+          // Axis label
+          histCtx.fillStyle = '#94a3b8';
+          histCtx.font = '9px "JetBrains Mono", monospace';
+          histCtx.textAlign = 'center';
+          histCtx.fillText(bin.label, x + barW / 2, h - 3);
+        });
+      }
+
+      // Histogram Hover Tooltip
+      const histTooltip = document.getElementById('hist-tooltip');
+      histCanvas.addEventListener('mousemove', e => {
+        const rect = histCanvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const idx = Math.floor((mx / rect.width) * HIST_BINS.length);
+        const bin = HIST_BINS[idx];
+        if (bin) {
+          histTooltip.classList.remove('hidden');
+          histTooltip.style.left = `${Math.min(rect.width - 170, Math.max(4, mx - 60))}px`;
+          histTooltip.textContent = `${bin.min}-${bin.max}km: ${bin.total} RSOs (${bin.DEBRIS} deb)`;
+        }
+      });
+      histCanvas.addEventListener('mouseleave', () => {
+        histTooltip.classList.add('hidden');
+      });
+
+      // =========================================================================
+      // 10. RAYCASTING (HOVER & CLICK-TO-SELECT DEBRIS IN 3D)
+      // =========================================================================
+      const raycaster = new THREE.Raycaster();
+      raycaster.params.Points.threshold = 0.35;
+      const mouse = new THREE.Vector2();
+      const hoverTooltip = document.getElementById('hover-tooltip');
+      let pointerDownPos = { x: 0, y: 0 };
+
+      renderer.domElement.addEventListener('pointerdown', e => {
+        pointerDownPos = { x: e.clientX, y: e.clientY };
+      });
+
+      renderer.domElement.addEventListener('pointermove', e => {
+        mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(debrisPoints);
+
+        let foundIdx = -1;
+        for (let i = 0; i < intersects.length; i++) {
+          const idx = intersects[i].index;
+          if (catalog[idx] && catalog[idx].visible) {
+            foundIdx = idx;
+            break;
+          }
+        }
+
+        state.hoveredId = foundIdx;
+        if (foundIdx !== -1) {
+          const obj = catalog[foundIdx];
+          renderer.domElement.style.cursor = 'pointer';
+          hoverTooltip.classList.remove('hidden');
+          hoverTooltip.style.left = `${Math.min(window.innerWidth - 210, e.clientX + 14)}px`;
+          hoverTooltip.style.top = `${Math.min(window.innerHeight - 70, e.clientY + 14)}px`;
+          document.getElementById('tt-dot').style.backgroundColor = OBJECT_TYPES[obj.type].color;
+          document.getElementById('tt-name').textContent = obj.name;
+          document.getElementById('tt-norad').textContent = `NORAD: ${obj.norad}`;
+          document.getElementById('tt-alt').textContent = `ALT: ${Math.round(obj.currentAlt)} km`;
+        } else {
+          renderer.domElement.style.cursor = 'grab';
+          hoverTooltip.classList.add('hidden');
+        }
+      });
+
+      renderer.domElement.addEventListener('pointerup', e => {
+        const moveDist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+        if (moveDist < 5 && state.hoveredId !== -1) {
+          selectObjectByIndex(state.hoveredId, false);
+        }
+      });
+
+      // =========================================================================
+      // 11. UI CONTROLS & INTERACTION BINDINGS
+      // =========================================================================
+      // Time Warp Buttons
+      document.querySelectorAll('.speed-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.speedMultiplier = Number(btn.dataset.speed);
+          document.querySelectorAll('.speed-btn').forEach(b => {
+            b.className = 'speed-btn px-2 py-1 rounded-md text-slate-400 hover:text-white transition';
+          });
+          btn.className = 'speed-btn px-2 py-1 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold transition';
+        });
+      });
+
+      // Reset Camera
+      document.getElementById('reset-cam-btn').addEventListener('click', () => {
+        state.lockCamera = false;
+        updateTrackButtonUI();
+        camera.position.set(22, 13, 24);
+        controls.target.set(0, 0, 0);
+        controls.update();
+      });
+
+      // Lock Camera to Selected Object
+      function updateTrackButtonUI() {
+        const btn = document.getElementById('track-camera-btn');
+        if (state.lockCamera) {
+          btn.textContent = 'LOCKED';
+          btn.classList.add('bg-cyan-500', 'text-slate-950', 'font-bold');
+        } else {
+          btn.textContent = 'LOCK CAM';
+          btn.classList.remove('bg-cyan-500', 'text-slate-950', 'font-bold');
+        }
+      }
+      document.getElementById('track-camera-btn').addEventListener('click', () => {
+        state.lockCamera = !state.lockCamera;
+        updateTrackButtonUI();
+      });
+
+      // Type Filters
+      function syncFilterButtonsUI() {
+        document.querySelectorAll('.type-filter-btn').forEach(btn => {
+          const t = btn.dataset.type;
+          if (state.activeTypes.has(t)) {
+            btn.classList.remove('opacity-40');
+          } else {
+            btn.classList.add('opacity-40');
+          }
+        });
+        document.querySelectorAll('.regime-btn').forEach(btn => {
+          const active = btn.dataset.regime === state.activeRegime;
+          btn.className = active
+            ? `regime-btn ${btn.dataset.regime === 'HEO' ? 'col-span-2 ' : ''}px-2 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-500/50 text-cyan-200 font-semibold text-center`
+            : `regime-btn ${btn.dataset.regime === 'HEO' ? 'col-span-2 ' : ''}px-2 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-400 hover:text-slate-200 text-center`;
+        });
+        document.querySelectorAll('.event-btn').forEach(btn => {
+          const active = btn.dataset.event === state.activeEvent;
+          btn.className = active
+            ? 'event-btn text-left px-2.5 py-1.5 rounded-lg bg-slate-800/90 border border-cyan-500/40 text-cyan-300 flex items-center justify-between'
+            : 'event-btn text-left px-2.5 py-1.5 rounded-lg bg-slate-900/70 border border-slate-800 hover:border-slate-700 text-slate-300 flex items-center justify-between';
+        });
+      }
+
+      document.querySelectorAll('.type-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const t = btn.dataset.type;
+          if (state.activeTypes.has(t)) {
+            if (state.activeTypes.size > 1) state.activeTypes.delete(t);
+          } else {
+            state.activeTypes.add(t);
+          }
+          syncFilterButtonsUI();
+          applyCatalogFilters();
+        });
+      });
+
+      document.getElementById('reset-types-btn').addEventListener('click', () => {
+        state.activeTypes = new Set(['PAYLOAD', 'ROCKET_BODY', 'DEBRIS', 'HIGH_RISK']);
+        syncFilterButtonsUI();
+        applyCatalogFilters();
+      });
+
+      // Regime Filters
+      document.querySelectorAll('.regime-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.activeRegime = btn.dataset.regime;
+          syncFilterButtonsUI();
+          applyCatalogFilters();
+        });
+      });
+
+      // Historic Debris Events
+      document.querySelectorAll('.event-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.activeEvent = btn.dataset.event;
+          syncFilterButtonsUI();
+          applyCatalogFilters();
+        });
+      });
+
+      // Search Input & Live Results Dropdown
+      const searchInput = document.getElementById('search-input');
+      const clearSearchBtn = document.getElementById('clear-search-btn');
+      const searchResultsEl = document.getElementById('search-results');
+
+      searchInput.addEventListener('input', () => {
+        state.searchQuery = searchInput.value;
+        applyCatalogFilters();
+
+        const q = state.searchQuery.trim().toUpperCase();
+        if (q.length > 0) {
+          clearSearchBtn.classList.remove('hidden');
+          const matches = catalog
+            .filter(o => o.name.includes(q) || String(o.norad).includes(q) || o.intl.includes(q))
+            .slice(0, 12);
+
+          if (matches.length > 0) {
+            searchResultsEl.classList.remove('hidden');
+            searchResultsEl.innerHTML = matches
+              .map(
+                m => `
+                <button data-idx="${m.id}" class="search-item w-full text-left px-2.5 py-1.5 hover:bg-slate-800/90 flex items-center justify-between font-mono text-[11px]">
+                  <span class="truncate text-slate-200">${m.name}</span>
+                  <span class="text-cyan-400 shrink-0 ml-2">#${m.norad}</span>
+                </button>`
+              )
+              .join('');
+
+            searchResultsEl.querySelectorAll('.search-item').forEach(item => {
+              item.addEventListener('click', () => {
+                selectObjectByIndex(Number(item.dataset.idx), true);
+                searchResultsEl.classList.add('hidden');
+              });
+            });
+          } else {
+            searchResultsEl.classList.add('hidden');
+          }
+        } else {
+          clearSearchBtn.classList.add('hidden');
+          searchResultsEl.classList.add('hidden');
+        }
+      });
+
+      clearSearchBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        state.searchQuery = '';
+        clearSearchBtn.classList.add('hidden');
+        searchResultsEl.classList.add('hidden');
+        applyCatalogFilters();
+      });
+
+      // Quick Target Buttons in Footer
+      document.querySelectorAll('.quick-target-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const norad = Number(btn.dataset.quickNorad);
+          const idx = catalog.findIndex(o => o.norad === norad);
+          if (idx !== -1) selectObjectByIndex(idx, true);
+        });
+      });
+
+      // Grid & Key Orbits Toggles
+      document.getElementById('toggle-grid-cb').addEventListener('change', e => {
+        earthGridMesh.visible = e.target.checked;
+        geoRingLine.visible = e.target.checked;
+      });
+      document.getElementById('toggle-orbits-cb').addEventListener('change', e => {
+        const show = e.target.checked;
+        selectedOrbitLine.visible = show;
+        velocityArrow.visible = show;
+        apogeeMarker.visible = show;
+        perigeeMarker.visible = show;
+      });
+
+      // Mobile Sidebars
+      const leftSidebar = document.getElementById('left-sidebar');
+      const rightSidebar = document.getElementById('right-sidebar');
+      document.getElementById('toggle-left-btn').addEventListener('click', () => {
+        leftSidebar.classList.toggle('-translate-x-[110%]');
+      });
+      document.getElementById('toggle-right-btn').addEventListener('click', () => {
+        rightSidebar.classList.toggle('translate-x-[110%]');
+      });
+
+      // Info Modal
+      const infoModal = document.getElementById('info-modal');
+      function openModal() {
+        infoModal.classList.remove('hidden');
+        infoModal.classList.add('flex');
+      }
+      function closeModal() {
+        infoModal.classList.add('hidden');
+        infoModal.classList.remove('flex');
+      }
+      document.getElementById('open-info-btn').addEventListener('click', openModal);
+      document.getElementById('close-info-btn').addEventListener('click', closeModal);
+      document.getElementById('modal-ack-btn').addEventListener('click', closeModal);
+      window.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeModal();
+      });
+
+      // Responsive Resize
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        drawHistogram();
+      });
+
+      // =========================================================================
+      // 12. MAIN 60FPS PROPAGATION & RENDER LOOP
+      // =========================================================================
+      const tmpVec = new THREE.Vector3();
+      const nextVec = new THREE.Vector3();
+      const velDir = new THREE.Vector3();
+      const utcClockEl = document.getElementById('utc-clock');
+      let lastFrameTime = performance.now();
+      let hudThrottle = 0;
+
+      function animate(now) {
+        requestAnimationFrame(animate);
+
+        const dtRealSec = Math.min(0.1, (now - lastFrameTime) / 1000);
+        lastFrameTime = now;
+
+        state.simTimeSec += dtRealSec * state.speedMultiplier;
+
+        // Rotate Earth at sidereal angular rate (7.2921159e-5 rad/s)
+        earthGroup.rotation.y = state.simTimeSec * 7.2921159e-5;
+
+        // Propagate all 5,000 resident space objects
+        for (let i = 0; i < catalog.length; i++) {
+          const obj = catalog[i];
+          const rKm = computePositionAtTime(obj, state.simTimeSec, tmpVec);
+          obj.x = tmpVec.x;
+          obj.y = tmpVec.y;
+          obj.z = tmpVec.z;
+          obj.currentAlt = rKm - EARTH_RADIUS_KM;
+
+          pointPositions[i * 3] = tmpVec.x;
+          pointPositions[i * 3 + 1] = tmpVec.y;
+          pointPositions[i * 3 + 2] = tmpVec.z;
+        }
+        pointsGeo.attributes.position.needsUpdate = true;
+
+        // Update selected object marker, velocity arrow & live telemetry
+        const selObj = catalog[state.selectedId];
+        if (selObj) {
+          // Vis-viva equation: v = sqrt(mu * (2/r - 1/a))
+          const rKm = EARTH_RADIUS_KM + selObj.currentAlt;
+          selObj.currentVel = Math.sqrt(Math.max(0, MU_EARTH * (2 / rKm - 1 / selObj.a)));
+
+          selectedMarker.position.set(selObj.x, selObj.y, selObj.z);
+          selectedHalo.lookAt(camera.position);
+
+          // Velocity tangent vector
+          computePositionAtTime(selObj, state.simTimeSec + 2.0, nextVec);
+          velDir.subVectors(nextVec, selectedMarker.position).normalize();
+          velocityArrow.position.copy(selectedMarker.position);
+          velocityArrow.setDirection(velDir);
+
+          if (state.lockCamera) {
+            const deltaMove = new THREE.Vector3().subVectors(selectedMarker.position, controls.target);
+            camera.position.add(deltaMove);
+            controls.target.copy(selectedMarker.position);
+          }
+
+          hudThrottle++;
+          if (hudThrottle % 6 === 0) {
+            updateLiveTelemetryNumbers(selObj);
+            const simDate = new Date(state.epochStartMs + state.simTimeSec * 1000);
+            utcClockEl.textContent = simDate.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+          }
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+      }
+
+      // Initialize on window load
+      window.onload = function () {
+        selectObjectByIndex(0, false);
+        drawHistogram();
+        animate(performance.now());
+      };
+    })();
+  </script>
+</body>
+</html>
