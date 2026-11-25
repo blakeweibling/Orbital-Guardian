@@ -174,11 +174,15 @@
             <select id="data-source-select" class="bg-transparent text-cyan-300 font-semibold focus:outline-none cursor-pointer" title="Select Orbital Telemetry Feed">
               <option value="SIM_5K" class="bg-slate-950 text-slate-100">SIM CATALOG (5,000)</option>
               <option value="stations" class="bg-slate-950 text-cyan-300">LIVE CELESTRAK: STATIONS</option>
-              <option value="active" class="bg-slate-950 text-cyan-300">LIVE CELESTRAK: ACTIVE</option>
-              <option value="fengyun-1c-debris" class="bg-slate-950 text-red-300">LIVE CELESTRAK: FENGYUN-1C</option>
-              <option value="cosmos-2251-debris" class="bg-slate-950 text-red-300">LIVE CELESTRAK: COSMOS-2251</option>
-              <option value="gpz" class="bg-slate-950 text-amber-300">LIVE CELESTRAK: GPZ</option>
+              <option value="active" class="bg-slate-950 text-cyan-300">LIVE CELESTRAK: ACTIVE (2.5K)</option>
+              <option value="starlink" class="bg-slate-950 text-cyan-300">LIVE CELESTRAK: STARLINK</option>
+              <option value="fengyun" class="bg-slate-950 text-red-300">LIVE CELESTRAK: FENGYUN-1C</option>
+              <option value="cosmos2251" class="bg-slate-950 text-red-300">LIVE CELESTRAK: COSMOS-2251</option>
+              <option value="gpz" class="bg-slate-950 text-amber-300">LIVE CELESTRAK: GPZ (GEO)</option>
             </select>
+            <button id="open-custom-tle-btn" class="ml-1 px-1.5 py-0.2 rounded bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-500/40 text-cyan-200 font-semibold transition" title="Paste Custom 2-Line/3-Line TLE or OMM JSON">
+              PASTE TLE
+            </button>
           </div>
         </div>
         <div class="flex items-center gap-2 text-[10px] font-mono text-slate-400">
@@ -615,6 +619,50 @@
     </div>
   </div>
 
+  <!-- CUSTOM TLE / OMM JSON INGESTION MODAL -->
+  <div id="custom-tle-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+    <div class="hud-panel border-cyan-500/40 rounded-2xl max-w-xl w-full p-5 shadow-2xl font-mono">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+          <h2 class="font-bold text-xs sm:text-sm text-white tracking-wide">
+            INGEST CUSTOM TLE SET OR CCSDS OMM JSON
+          </h2>
+        </div>
+        <button id="close-custom-tle-btn" class="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white text-xs">
+          ✕
+        </button>
+      </div>
+
+      <p class="text-[11px] text-slate-400 mb-2 leading-relaxed">
+        Paste raw 2-line / 3-line NORAD TLE sets or a CelesTrak OMM JSON array below to propagate directly via <span class="text-cyan-300">satellite.js SGP4</span> without external network requests:
+      </p>
+
+      <textarea
+        id="custom-tle-textarea"
+        rows="8"
+        placeholder="ISS (ZARYA)&#10;1 25544U 98067A   26329.51234567  .00016717  00000-0  30124-3 0  9991&#10;2 25544  51.6412 112.4510 0004123  85.1234 275.0123 15.49812345481234"
+        class="w-full bg-slate-950/95 border border-slate-700 focus:border-cyan-500 rounded-xl p-3 text-[11px] text-cyan-200 placeholder-slate-600 focus:outline-none leading-relaxed"
+      ></textarea>
+
+      <div id="custom-tle-error" class="hidden mt-2 text-[11px] text-red-400"></div>
+
+      <div class="mt-3 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+        <button id="load-sample-tle-btn" class="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-[11px] transition">
+          LOAD SAMPLE TLE
+        </button>
+        <div class="flex items-center gap-2">
+          <button id="cancel-custom-tle-btn" class="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 text-[11px] transition">
+            CANCEL
+          </button>
+          <button id="ingest-custom-tle-btn" class="px-4 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-[11px] transition">
+            PROPAGATE SGP4
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- APPLICATION LOGIC & 3D SSA WORKSTATION ENGINE -->
   <script>
     (function () {
@@ -635,10 +683,20 @@
       const MAX_CAPACITY = 5000;
 
       const OBJECT_TYPES = {
-        PAYLOAD: { label: 'PAYLOAD', color: '#06b6d4', hex: 0x06b6d4 },
+        PAYLOAD: { label: 'ACTIVE PAYLOAD', color: '#06b6d4', hex: 0x06b6d4 },
         ROCKET_BODY: { label: 'ROCKET BODY', color: '#f59e0b', hex: 0xf59e0b },
-        DEBRIS: { label: 'DEBRIS', color: '#ef4444', hex: 0xef4444 },
-        HIGH_RISK: { label: 'WATCHLIST', color: '#d946ef', hex: 0xd946ef }
+        DEBRIS: { label: 'DEBRIS FRAGMENT', color: '#ef4444', hex: 0xef4444 },
+        HIGH_RISK: { label: 'HIGH-RISK / WATCH', color: '#d946ef', hex: 0xd946ef }
+      };
+
+      // Official CelesTrak GP Group Slug Map
+      const CELESTRAK_GROUP_MAP = {
+        stations: { slug: 'stations', label: 'STATIONS', cap: 500 },
+        active: { slug: 'active', label: 'ACTIVE', cap: 2500 },
+        starlink: { slug: 'starlink', label: 'STARLINK', cap: 2500 },
+        fengyun: { slug: '1999-025', label: 'FENGYUN-1C', cap: 3000 },
+        cosmos2251: { slug: '2009-005', label: 'COSMOS-2251', cap: 2500 },
+        gpz: { slug: 'gpz', label: 'GPZ (GEO)', cap: 1500 }
       };
 
       const GROUND_STATIONS = {
@@ -829,95 +887,271 @@
       catalog = generateSimulatedCatalog();
 
       // =========================================================================
-      // 3. LIVE CELESTRAK OMM JSON INGESTION + SATELLITE.JS SGP4 CONVERTER
+      // 3. RESILIENT CELESTRAK WATERFALL INGESTION (OMM JSON + 3-LINE TLE + RELAYS)
       // =========================================================================
-      async function loadDataSource(sourceKey) {
+      function classifySpaceObject(name, altPe, ecc) {
+        const upper = name.toUpperCase();
+        if (upper.includes('DEB') || upper.includes('FRAG') || upper.includes('WESTFORD')) return 'DEBRIS';
+        if (upper.includes('R/B') || upper.includes('ROCKET') || upper.includes('BREEZE') || upper.includes('CENTAUR') || upper.includes('FREGAT')) return 'ROCKET_BODY';
+        if (altPe > 730 && altPe < 900 && ecc < 0.05) return 'HIGH_RISK';
+        return 'PAYLOAD';
+      }
+
+      function validateAndBuildSgp4Object(idx, name, norad, intl, satrec, ommFallback = null) {
+        if (!satrec || satrec.error !== 0) return null;
+
+        // Verify valid propagation at epoch
+        const testDate = new Date(state.epochStartMs);
+        let pv = null;
+        try {
+          pv = window.satellite.propagate(satrec, testDate);
+        } catch (e) {
+          return null;
+        }
+        if (!pv || !pv.position || typeof pv.position.x !== 'number' || !Number.isFinite(pv.position.x)) {
+          return null;
+        }
+
+        const nRadSec = (satrec.no || 0.065) / 60.0; // satrec.no is rad/min
+        if (!Number.isFinite(nRadSec) || nRadSec <= 0) return null;
+
+        const aKm = Math.pow(MU_EARTH / (nRadSec * nRadSec), 1 / 3);
+        const ecc = Math.max(0.0001, Math.min(0.95, Number(satrec.ecco) || (ommFallback ? Number(ommFallback.ECCENTRICITY) : 0.001)));
+        const altPe = Math.max(105, aKm * (1 - ecc) - EARTH_RADIUS_KM);
+        const altAp = Math.max(altPe + 1, aKm * (1 + ecc) - EARTH_RADIUS_KM);
+        if (!Number.isFinite(altPe) || !Number.isFinite(altAp) || altPe > 120000) return null;
+
+        const incDeg = ommFallback && ommFallback.INCLINATION !== undefined
+          ? Number(ommFallback.INCLINATION)
+          : (satrec.inclo * RAD2DEG);
+        const raanDeg = ommFallback && ommFallback.RA_OF_ASC_NODE !== undefined
+          ? Number(ommFallback.RA_OF_ASC_NODE)
+          : (satrec.nodeo * RAD2DEG);
+        const argpDeg = ommFallback && ommFallback.ARG_OF_PERICENTER !== undefined
+          ? Number(ommFallback.ARG_OF_PERICENTER)
+          : (satrec.argpo * RAD2DEG);
+        const m0Deg = ommFallback && ommFallback.MEAN_ANOMALY !== undefined
+          ? Number(ommFallback.MEAN_ANOMALY)
+          : (satrec.mo * RAD2DEG);
+
+        const type = classifySpaceObject(name, altPe, ecc);
+        return buildOrbitalElement(idx, {
+          norad,
+          name,
+          intl,
+          type,
+          source: 'CELESTRAK',
+          rcs: type === 'DEBRIS' ? 'SMALL' : 'LARGE',
+          altPe,
+          altAp,
+          inc: Number.isFinite(incDeg) ? incDeg : 51.6,
+          raan: Number.isFinite(raanDeg) ? raanDeg : 0,
+          argp: Number.isFinite(argpDeg) ? argpDeg : 0,
+          m0: Number.isFinite(m0Deg) ? m0Deg : 0,
+          event: 'ALL',
+          risk: type === 'DEBRIS' ? 0.78 : type === 'HIGH_RISK' ? 0.85 : 0.24,
+          satrec
+        });
+      }
+
+      function parseOmmJsonPayload(ommArray, cap = 2500) {
+        if (!Array.isArray(ommArray) || ommArray.length === 0) {
+          throw new Error('Empty OMM JSON array');
+        }
+        const slice = ommArray.slice(0, Math.min(cap, MAX_CAPACITY));
+        const parsedList = [];
+
+        for (let i = 0; i < slice.length; i++) {
+          const omm = slice[i];
+          const name = String(omm.OBJECT_NAME || `RSO-${omm.NORAD_CAT_ID || i}`).trim().toUpperCase();
+          const norad = Number(omm.NORAD_CAT_ID) || (90000 + i);
+          const intl = String(omm.OBJECT_ID || '2026-000A').trim();
+
+          let satrec = null;
+          if (window.satellite && typeof window.satellite.json2satrec === 'function') {
+            try {
+              satrec = window.satellite.json2satrec(omm);
+            } catch (e) {
+              satrec = null;
+            }
+          }
+
+          const built = validateAndBuildSgp4Object(parsedList.length, name, norad, intl, satrec, omm);
+          if (built) {
+            parsedList.push(built);
+          } else {
+            // Fallback analytical J2 element if satrec epoch/fields had minor formatting quirk
+            const mm = Number(omm.MEAN_MOTION);
+            if (Number.isFinite(mm) && mm > 0) {
+              const nRadSec = (mm * TWO_PI) / 86400.0;
+              const aKm = Math.pow(MU_EARTH / (nRadSec * nRadSec), 1 / 3);
+              const ecc = Math.max(0.0001, Math.min(0.95, Number(omm.ECCENTRICITY) || 0.001));
+              const altPe = Math.max(110, aKm * (1 - ecc) - EARTH_RADIUS_KM);
+              const altAp = Math.max(altPe + 1, aKm * (1 + ecc) - EARTH_RADIUS_KM);
+              const type = classifySpaceObject(name, altPe, ecc);
+              parsedList.push(buildOrbitalElement(parsedList.length, {
+                norad,
+                name,
+                intl,
+                type,
+                source: 'CELESTRAK',
+                rcs: type === 'DEBRIS' ? 'SMALL' : 'LARGE',
+                altPe,
+                altAp,
+                inc: Number(omm.INCLINATION) || 51.6,
+                raan: Number(omm.RA_OF_ASC_NODE) || 0,
+                argp: Number(omm.ARG_OF_PERICENTER) || 0,
+                m0: Number(omm.MEAN_ANOMALY) || 0,
+                event: 'ALL',
+                risk: type === 'DEBRIS' ? 0.78 : 0.24,
+                satrec: null
+              }));
+            }
+          }
+        }
+
+        if (parsedList.length === 0) throw new Error('No valid orbital elements in OMM payload');
+        return parsedList;
+      }
+
+      function parseTleTextPayload(tleText, cap = 2500) {
+        if (!tleText || typeof tleText !== 'string') throw new Error('Empty TLE response');
+        const lines = tleText
+          .split(/\r?\n/)
+          .map(l => l.trim())
+          .filter(l => l.length > 0);
+
+        const parsedList = [];
+        let pendingName = null;
+
+        for (let i = 0; i < lines.length && parsedList.length < Math.min(cap, MAX_CAPACITY); i++) {
+          const line = lines[i];
+          if (line.startsWith('1 ') && line.length >= 68 && i + 1 < lines.length && lines[i + 1].startsWith('2 ')) {
+            const tle1 = line;
+            const tle2 = lines[i + 1];
+            i++; // consume line 2
+
+            const norad = Number(tle1.substring(2, 7).trim()) || (90000 + parsedList.length);
+            const intlRaw = tle1.substring(9, 17).trim();
+            const intl = intlRaw ? `${intlRaw.slice(0, 2)}-${intlRaw.slice(2)}` : '2026-000A';
+            const name = (pendingName || `NORAD ${norad}`).replace(/^0\s+/, '').toUpperCase();
+            pendingName = null;
+
+            if (window.satellite && typeof window.satellite.twoline2satrec === 'function') {
+              try {
+                const satrec = window.satellite.twoline2satrec(tle1, tle2);
+                const built = validateAndBuildSgp4Object(parsedList.length, name, norad, intl, satrec, null);
+                if (built) parsedList.push(built);
+              } catch (e) {
+                // Skip malformed TLE pair
+              }
+            }
+          } else if (!line.startsWith('1 ') && !line.startsWith('2 ')) {
+            pendingName = line;
+          }
+        }
+
+        if (parsedList.length === 0) throw new Error('No valid TLE pairs parsed');
+        return parsedList;
+      }
+
+      async function fetchWithTimeout(url, timeoutMs = 6000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const resp = await fetch(url, { signal: controller.signal });
+          clearTimeout(timer);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          return await resp.text();
+        } catch (err) {
+          clearTimeout(timer);
+          throw err;
+        }
+      }
+
+      async function loadCelesTrakGroup(sourceKey) {
         state.dataSource = sourceKey;
         const statusEl = document.getElementById('propagator-status-text');
         const dotEl = document.getElementById('feed-status-dot');
 
         if (sourceKey === 'SIM_5K') {
           catalog = generateSimulatedCatalog();
-          statusEl.textContent = 'J2 KEPLER + SGP4 ENGINE • 5,000 NODES';
+          statusEl.textContent = 'J2 KEPLER + SGP4 ENGINE • 5,000 SIM NODES';
+          statusEl.className = 'text-slate-400';
           dotEl.className = 'relative w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot mr-1';
           onCatalogReplaced();
           return;
         }
 
-        statusEl.textContent = `FETCHING CELESTRAK GP (${sourceKey.toUpperCase()})...`;
+        const groupCfg = CELESTRAK_GROUP_MAP[sourceKey] || { slug: sourceKey, label: sourceKey.toUpperCase(), cap: 2500 };
+        const directOmmUrl = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${encodeURIComponent(groupCfg.slug)}&FORMAT=json`;
+        const directTleUrl = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${encodeURIComponent(groupCfg.slug)}&FORMAT=tle`;
+
+        const attempts = [
+          {
+            routeLabel: 'Direct OMM',
+            url: directOmmUrl,
+            mode: 'OMM'
+          },
+          {
+            routeLabel: 'Direct TLE',
+            url: directTleUrl,
+            mode: 'TLE'
+          },
+          {
+            routeLabel: 'CORS Relay 1',
+            url: `https://api.allorigins.win/raw?url=${encodeURIComponent(directTleUrl)}`,
+            mode: 'TLE'
+          },
+          {
+            routeLabel: 'CORS Relay 2',
+            url: `https://corsproxy.io/?${encodeURIComponent(directOmmUrl)}`,
+            mode: 'OMM'
+          }
+        ];
+
         dotEl.className = 'relative w-1.5 h-1.5 rounded-full bg-amber-400 pulse-dot mr-1';
+        statusEl.className = 'text-amber-300 font-semibold';
 
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 7000);
-          const url = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${encodeURIComponent(sourceKey)}&FORMAT=json`;
-          const resp = await fetch(url, { signal: controller.signal });
-          clearTimeout(timer);
+        let lastErrorMsg = 'CORS / Network Blocked';
 
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const ommArray = await resp.json();
-          if (!Array.isArray(ommArray) || ommArray.length === 0) throw new Error('Empty OMM feed');
+        for (let step = 0; step < attempts.length; step++) {
+          const attempt = attempts[step];
+          statusEl.textContent = `CONNECTING (${step + 1}/${attempts.length}: ${attempt.routeLabel})...`;
 
-          const slice = ommArray.slice(0, MAX_CAPACITY);
-          const parsedList = [];
-
-          slice.forEach((omm, idx) => {
-            const name = (omm.OBJECT_NAME || `RSO-${omm.NORAD_CAT_ID}`).toUpperCase();
-            const norad = Number(omm.NORAD_CAT_ID) || (90000 + idx);
-            const intl = omm.OBJECT_ID || '2026-000A';
-            const meanMotionRevDay = Number(omm.MEAN_MOTION) || 15.0;
-            const nRadSec = (meanMotionRevDay * TWO_PI) / 86400.0;
-            const aKm = Math.pow(MU_EARTH / (nRadSec * nRadSec), 1 / 3);
-            const ecc = Math.max(0.0001, Math.min(0.95, Number(omm.ECCENTRICITY) || 0.001));
-            const altPe = Math.max(120, aKm * (1 - ecc) - EARTH_RADIUS_KM);
-            const altAp = Math.max(altPe + 1, aKm * (1 + ecc) - EARTH_RADIUS_KM);
-
-            let type = 'PAYLOAD';
-            if (name.includes('DEB')) type = 'DEBRIS';
-            else if (name.includes('R/B') || name.includes('ROCKET')) type = 'ROCKET_BODY';
-            else if (altPe > 730 && altPe < 900 && ecc < 0.05) type = 'HIGH_RISK';
-
-            let satrec = null;
-            if (window.satellite && typeof window.satellite.json2satrec === 'function') {
-              try {
-                satrec = window.satellite.json2satrec(omm);
-              } catch (err) {
-                satrec = null;
-              }
+          try {
+            const rawText = await fetchWithTimeout(attempt.url, 6000);
+            const trimmed = rawText.trim();
+            if (!trimmed || trimmed.startsWith('<')) {
+              throw new Error('HTML challenge / non-telemetry payload');
             }
 
-            parsedList.push(buildOrbitalElement(idx, {
-              norad,
-              name,
-              intl,
-              type,
-              source: 'CELESTRAK',
-              rcs: type === 'DEBRIS' ? 'SMALL' : 'LARGE',
-              altPe,
-              altAp,
-              inc: Number(omm.INCLINATION) || 51.6,
-              raan: Number(omm.RA_OF_ASC_NODE) || 0,
-              argp: Number(omm.ARG_OF_PERICENTER) || 0,
-              m0: Number(omm.MEAN_ANOMALY) || 0,
-              event: 'ALL',
-              risk: type === 'DEBRIS' ? 0.76 : 0.25,
-              satrec
-            }));
-          });
+            const parsedList = attempt.mode === 'OMM'
+              ? parseOmmJsonPayload(JSON.parse(trimmed), groupCfg.cap)
+              : parseTleTextPayload(trimmed, groupCfg.cap);
 
-          catalog = parsedList;
-          state.epochStartMs = Date.now();
-          state.simTimeSec = 0;
-          statusEl.textContent = `LIVE SGP4 FEED • ${catalog.length.toLocaleString()} OMM OBJECTS`;
-          dotEl.className = 'relative w-1.5 h-1.5 rounded-full bg-cyan-400 pulse-dot mr-1';
-          onCatalogReplaced();
-        } catch (err) {
-          // Graceful offline/CORS fallback
-          catalog = generateSimulatedCatalog();
-          statusEl.textContent = 'OFFLINE FALLBACK • SIM 5K CATALOG ACTIVE';
-          dotEl.className = 'relative w-1.5 h-1.5 rounded-full bg-amber-400 pulse-dot mr-1';
-          onCatalogReplaced();
+            catalog = parsedList;
+            state.epochStartMs = Date.now();
+            state.simTimeSec = 0;
+
+            dotEl.className = 'relative w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot mr-1';
+            statusEl.className = 'text-emerald-400 font-semibold';
+            statusEl.textContent = `CELESTRAK LIVE (${catalog.length.toLocaleString()} RSOs • ${attempt.routeLabel})`;
+            onCatalogReplaced();
+            return;
+          } catch (err) {
+            lastErrorMsg = err && err.name === 'AbortError' ? 'Timeout (6s)' : (err.message || 'CORS Blocked');
+          }
         }
+
+        // All external routes failed -> fallback gracefully to simulated catalog with clear diagnostic
+        catalog = generateSimulatedCatalog();
+        dotEl.className = 'relative w-1.5 h-1.5 rounded-full bg-red-400 pulse-dot mr-1';
+        statusEl.className = 'text-amber-300';
+        statusEl.innerHTML = `CORS / NETWORK BLOCKED (${lastErrorMsg}) — USING SIM • <button id="inline-paste-tle-trigger" class="underline text-cyan-300 hover:text-white cursor-pointer">PASTE TLE</button>`;
+        const inlineBtn = document.getElementById('inline-paste-tle-trigger');
+        if (inlineBtn) inlineBtn.addEventListener('click', openCustomTleModal);
+        onCatalogReplaced();
       }
 
       // =========================================================================
@@ -1803,12 +2037,52 @@
       // =========================================================================
       // 9. OBJECT SELECTION, TELEMETRY HUD & CONJUNCTION + TCA VISUALIZER
       // =========================================================================
-      const CONJUNCTION_ALERTS = [
-        { primaryIdx: 0, secondaryIdx: 6, baseMissM: 142, basePc: 1.84e-4, relVel: '14.6 km/s', tcaSimSec: 420 },
-        { primaryIdx: 7, secondaryIdx: 8, baseMissM: 89, basePc: 4.12e-4, relVel: '13.9 km/s', tcaSimSec: 840 },
-        { primaryIdx: 1, secondaryIdx: 4, baseMissM: 310, basePc: 6.20e-5, relVel: '14.2 km/s', tcaSimSec: 1260 },
-        { primaryIdx: 9, secondaryIdx: 3, baseMissM: 485, basePc: 2.95e-5, relVel: '12.8 km/s', tcaSimSec: 1680 }
-      ];
+      let activeConjunctionAlerts = [];
+
+      function buildDynamicConjunctionAlerts() {
+        if (catalog.length < 2) {
+          activeConjunctionAlerts = [];
+          return;
+        }
+        // When using default SIM_5K catalog, use curated high-drama orbital intersections
+        if (state.dataSource === 'SIM_5K' && catalog.length >= 10) {
+          activeConjunctionAlerts = [
+            { primaryIdx: 0, secondaryIdx: 6, baseMissM: 142, basePc: 1.84e-4, relVel: '14.6 km/s', tcaSimSec: 420 },
+            { primaryIdx: 7, secondaryIdx: 8, baseMissM: 89, basePc: 4.12e-4, relVel: '13.9 km/s', tcaSimSec: 840 },
+            { primaryIdx: 1, secondaryIdx: 4, baseMissM: 310, basePc: 6.20e-5, relVel: '14.2 km/s', tcaSimSec: 1260 },
+            { primaryIdx: 9, secondaryIdx: 3, baseMissM: 485, basePc: 2.95e-5, relVel: '12.8 km/s', tcaSimSec: 1680 }
+          ];
+          return;
+        }
+
+        // Dynamically pair objects in similar altitude shells for live CelesTrak / custom TLE feeds
+        const pairs = [];
+        const stride = Math.max(1, Math.floor(catalog.length / 40));
+        for (let i = 0; i < catalog.length && pairs.length < 4; i += stride) {
+          const p = catalog[i];
+          let bestJ = -1;
+          let bestAltDiff = Infinity;
+          for (let j = i + 1; j < Math.min(catalog.length, i + 120); j++) {
+            const diff = Math.abs(catalog[j].currentAlt - p.currentAlt);
+            if (diff < bestAltDiff) {
+              bestAltDiff = diff;
+              bestJ = j;
+            }
+          }
+          if (bestJ !== -1) {
+            const missM = Math.max(95, Math.min(850, Math.round(115 + pairs.length * 125 + bestAltDiff * 2)));
+            pairs.push({
+              primaryIdx: i,
+              secondaryIdx: bestJ,
+              baseMissM: missM,
+              basePc: Number((3.8e-4 / (pairs.length + 1)).toExponential(2)),
+              relVel: `${(13.2 + (pairs.length % 3) * 0.6).toFixed(1)} km/s`,
+              tcaSimSec: 360 + pairs.length * 360
+            });
+          }
+        }
+        activeConjunctionAlerts = pairs;
+      }
 
       function selectObjectByIndex(idx, flyCamera = false, clearConjunction = true) {
         if (idx < 0 || idx >= catalog.length) return;
@@ -1885,7 +2159,7 @@
 
       function updateCamMissProjection() {
         const readout = document.getElementById('cam-miss-readout');
-        const alert = state.activeConjunction || CONJUNCTION_ALERTS[0];
+        const alert = state.activeConjunction || activeConjunctionAlerts[0] || { baseMissM: 142, basePc: 1.84e-4 };
         const totalDv = Math.hypot(state.camProgradeMs, state.camRadialMs);
 
         // Each 1 m/s prograde burn shifts along-track arrival by ~280 meters at TCA
@@ -1922,7 +2196,12 @@
         const listEl = document.getElementById('conjunction-list');
         listEl.innerHTML = '';
 
-        CONJUNCTION_ALERTS.forEach(alert => {
+        if (activeConjunctionAlerts.length === 0) {
+          listEl.innerHTML = '<div class="text-[10px] text-slate-500 p-2">Insufficient RSOs in catalog for pair screening.</div>';
+          return;
+        }
+
+        activeConjunctionAlerts.forEach(alert => {
           const pObj = catalog[alert.primaryIdx] || catalog[0];
           const sObj = catalog[alert.secondaryIdx] || catalog[1] || catalog[0];
           const isCritical = alert.baseMissM < 200;
@@ -1949,7 +2228,7 @@
               vs ${sObj.name} (#${sObj.norad})
             </div>
             <div class="flex items-center justify-between text-[10px] text-slate-500 mt-0.5">
-              <span>Pc: <strong class="text-slate-300">${alert.basePc.toExponential(2)}</strong></span>
+              <span>Pc: <strong class="text-slate-300">${Number(alert.basePc).toExponential(2)}</strong></span>
               <span class="text-cyan-400">PLAY TCA ►</span>
             </div>
           `;
@@ -1962,6 +2241,7 @@
       function onCatalogReplaced() {
         updateTypeCounts();
         recomputeHistogramBins();
+        buildDynamicConjunctionAlerts();
         renderConjunctionFeed();
         selectObjectByIndex(0, false, true);
         applyCatalogFilters();
@@ -2039,30 +2319,87 @@
 
       // Data Source Selector
       document.getElementById('data-source-select').addEventListener('change', e => {
-        loadDataSource(e.target.value);
+        loadCelesTrakGroup(e.target.value);
       });
 
-      // Atmospheric Drag Toggle
+      // Atmospheric Drag / Re-entry Toggle
       document.getElementById('toggle-drag-btn').addEventListener('click', () => {
         state.dragEnabled = !state.dragEnabled;
-        const label = document.getElementById('drag-state-label');
-        const dot = document.getElementById('drag-dot');
+        const dotEl = document.getElementById('drag-dot');
+        const labelEl = document.getElementById('drag-state-label');
         if (state.dragEnabled) {
-          label.textContent = 'ON';
-          label.className = 'text-amber-400';
-          dot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-ping';
+          dotEl.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+          labelEl.textContent = 'ON';
+          labelEl.className = 'text-amber-300';
         } else {
-          label.textContent = 'OFF';
-          label.className = 'text-slate-400';
-          dot.className = 'w-2 h-2 rounded-full bg-slate-500';
-          catalog.forEach(o => {
-            o.dragDecayKm = 0;
-            o.a = o.baseA;
-            o.n = Math.sqrt(MU_EARTH / (o.a * o.a * o.a));
-            o.altPe = o.a * (1 - o.e) - EARTH_RADIUS_KM;
-            o.altAp = o.a * (1 + o.e) - EARTH_RADIUS_KM;
-          });
-          rebuildSelectedOrbitGeometry(catalog[state.selectedId]);
+          dotEl.className = 'w-2 h-2 rounded-full bg-slate-500';
+          labelEl.textContent = 'OFF';
+          labelEl.className = 'text-slate-400';
+        }
+      });
+
+      // Custom TLE / OMM Paste Modal Controls
+      const customTleModal = document.getElementById('custom-tle-modal');
+      const customTleTextarea = document.getElementById('custom-tle-textarea');
+      const customTleError = document.getElementById('custom-tle-error');
+
+      function openCustomTleModal() {
+        customTleError.classList.add('hidden');
+        customTleModal.classList.remove('hidden');
+        customTleModal.classList.add('flex');
+      }
+      function closeCustomTleModal() {
+        customTleModal.classList.add('hidden');
+        customTleModal.classList.remove('flex');
+      }
+
+      document.getElementById('open-custom-tle-btn').addEventListener('click', openCustomTleModal);
+      document.getElementById('close-custom-tle-btn').addEventListener('click', closeCustomTleModal);
+      document.getElementById('cancel-custom-tle-btn').addEventListener('click', closeCustomTleModal);
+
+      document.getElementById('load-sample-tle-btn').addEventListener('click', () => {
+        customTleError.classList.add('hidden');
+        customTleTextarea.value = [
+          'ISS (ZARYA)',
+          '1 25544U 98067A   26329.51234567  .00016717  00000-0  30124-3 0  9991',
+          '2 25544  51.6412 112.4510 0004123  85.1234 275.0123 15.49812345481234',
+          'CSS (TIANHE)',
+          '1 48274U 21035A   26329.48123456  .00021450  00000-0  26410-3 0  9994',
+          '2 48274  41.4715 210.3312 0006210  44.1200 316.0120 15.60123456310123',
+          'HST (HUBBLE)',
+          '1 20580U 90037B   26329.42001234  .00001234  00000-0  61234-4 0  9998',
+          '2 20580  28.4698 132.5120 0002450  78.4100 281.7200 15.09123456981234'
+        ].join('\n');
+      });
+
+      document.getElementById('ingest-custom-tle-btn').addEventListener('click', () => {
+        const raw = customTleTextarea.value.trim();
+        if (!raw) {
+          customTleError.textContent = 'Please paste a valid 2-line/3-line TLE set or OMM JSON array.';
+          customTleError.classList.remove('hidden');
+          return;
+        }
+        try {
+          const parsedList = raw.startsWith('[') || raw.startsWith('{')
+            ? parseOmmJsonPayload(Array.isArray(JSON.parse(raw)) ? JSON.parse(raw) : [JSON.parse(raw)], MAX_CAPACITY)
+            : parseTleTextPayload(raw, MAX_CAPACITY);
+
+          state.dataSource = 'CUSTOM_TLE';
+          catalog = parsedList;
+          state.epochStartMs = Date.now();
+          state.simTimeSec = 0;
+
+          const statusEl = document.getElementById('propagator-status-text');
+          const dotEl = document.getElementById('feed-status-dot');
+          dotEl.className = 'relative w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot mr-1';
+          statusEl.className = 'text-emerald-400 font-semibold';
+          statusEl.textContent = `CUSTOM SGP4 FEED (${catalog.length.toLocaleString()} RSOs)`;
+
+          closeCustomTleModal();
+          onCatalogReplaced();
+        } catch (err) {
+          customTleError.textContent = `Parse error: ${err.message}`;
+          customTleError.classList.remove('hidden');
         }
       });
 
@@ -2302,13 +2639,11 @@
       document.getElementById('open-info-btn').addEventListener('click', () => { infoModal.classList.remove('hidden'); infoModal.classList.add('flex'); });
       document.getElementById('close-info-btn').addEventListener('click', closeModal);
       document.getElementById('modal-ack-btn').addEventListener('click', closeModal);
-      window.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-
-      window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        drawAnalyticsCanvas();
+      window.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+          closeModal();
+          closeCustomTleModal();
+        }
       });
 
       // =========================================================================
